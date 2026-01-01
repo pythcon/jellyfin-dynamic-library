@@ -1,0 +1,12 @@
+/Users/toddmurphy/Development/repos/personal/jellyfin-dynamic-library/Jellyfin.Plugin.DynamicLibrary/bin/Debug/net9.0/Jellyfin.Plugin.DynamicLibrary.deps.json
+/Users/toddmurphy/Development/repos/personal/jellyfin-dynamic-library/Jellyfin.Plugin.DynamicLibrary/bin/Debug/net9.0/Jellyfin.Plugin.DynamicLibrary.dll
+/Users/toddmurphy/Development/repos/personal/jellyfin-dynamic-library/Jellyfin.Plugin.DynamicLibrary/bin/Debug/net9.0/Jellyfin.Plugin.DynamicLibrary.pdb
+/Users/toddmurphy/Development/repos/personal/jellyfin-dynamic-library/Jellyfin.Plugin.DynamicLibrary/obj/Debug/net9.0/Jellyfin.Plugin.DynamicLibrary.csproj.AssemblyReference.cache
+/Users/toddmurphy/Development/repos/personal/jellyfin-dynamic-library/Jellyfin.Plugin.DynamicLibrary/obj/Debug/net9.0/Jellyfin.Plugin.DynamicLibrary.GeneratedMSBuildEditorConfig.editorconfig
+/Users/toddmurphy/Development/repos/personal/jellyfin-dynamic-library/Jellyfin.Plugin.DynamicLibrary/obj/Debug/net9.0/Jellyfin.Plugin.DynamicLibrary.AssemblyInfoInputs.cache
+/Users/toddmurphy/Development/repos/personal/jellyfin-dynamic-library/Jellyfin.Plugin.DynamicLibrary/obj/Debug/net9.0/Jellyfin.Plugin.DynamicLibrary.AssemblyInfo.cs
+/Users/toddmurphy/Development/repos/personal/jellyfin-dynamic-library/Jellyfin.Plugin.DynamicLibrary/obj/Debug/net9.0/Jellyfin.Plugin.DynamicLibrary.csproj.CoreCompileInputs.cache
+/Users/toddmurphy/Development/repos/personal/jellyfin-dynamic-library/Jellyfin.Plugin.DynamicLibrary/obj/Debug/net9.0/Jellyfin.Plugin.DynamicLibrary.dll
+/Users/toddmurphy/Development/repos/personal/jellyfin-dynamic-library/Jellyfin.Plugin.DynamicLibrary/obj/Debug/net9.0/refint/Jellyfin.Plugin.DynamicLibrary.dll
+/Users/toddmurphy/Development/repos/personal/jellyfin-dynamic-library/Jellyfin.Plugin.DynamicLibrary/obj/Debug/net9.0/Jellyfin.Plugin.DynamicLibrary.pdb
+/Users/toddmurphy/Development/repos/personal/jellyfin-dynamic-library/Jellyfin.Plugin.DynamicLibrary/obj/Debug/net9.0/ref/Jellyfin.Plugin.DynamicLibrary.dll

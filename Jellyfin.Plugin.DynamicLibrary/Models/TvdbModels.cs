@@ -1,0 +1,247 @@
+using System.Text.Json.Serialization;
+
+namespace Jellyfin.Plugin.DynamicLibrary.Models;
+
+public class TvdbAuthResponse
+{
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = string.Empty;
+
+    [JsonPropertyName("data")]
+    public TvdbAuthData? Data { get; set; }
+}
+
+public class TvdbAuthData
+{
+    [JsonPropertyName("token")]
+    public string Token { get; set; } = string.Empty;
+}
+
+public class TvdbSearchResponse
+{
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = string.Empty;
+
+    [JsonPropertyName("data")]
+    public List<TvdbSearchResult> Data { get; set; } = new();
+}
+
+public class TvdbSearchResult
+{
+    [JsonPropertyName("objectID")]
+    public string ObjectId { get; set; } = string.Empty;
+
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("slug")]
+    public string Slug { get; set; } = string.Empty;
+
+    [JsonPropertyName("image_url")]
+    public string? ImageUrl { get; set; }
+
+    [JsonPropertyName("first_air_time")]
+    public string? FirstAirTime { get; set; }
+
+    [JsonPropertyName("overview")]
+    public string? Overview { get; set; }
+
+    [JsonPropertyName("primary_language")]
+    public string? PrimaryLanguage { get; set; }
+
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = string.Empty;
+
+    [JsonPropertyName("tvdb_id")]
+    public string TvdbId { get; set; } = string.Empty;
+
+    [JsonPropertyName("year")]
+    public string? Year { get; set; }
+
+    [JsonPropertyName("network")]
+    public string? Network { get; set; }
+
+    [JsonPropertyName("status")]
+    public string? Status { get; set; }
+
+    [JsonPropertyName("translations")]
+    public Dictionary<string, string>? Translations { get; set; }
+
+    public int TvdbIdInt => int.TryParse(TvdbId, out var id) ? id : 0;
+
+    /// <summary>
+    /// Gets the localized overview for the specified language code.
+    /// Falls back to the default Overview if translation is not available.
+    /// </summary>
+    /// <param name="languageCode">3-letter ISO 639-2 code (e.g., "eng", "jpn")</param>
+    public string? GetLocalizedOverview(string languageCode)
+    {
+        if (Translations?.TryGetValue(languageCode, out var translated) == true
+            && !string.IsNullOrEmpty(translated))
+        {
+            return translated;
+        }
+        return Overview;
+    }
+}
+
+public class TvdbSeriesResponse
+{
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = string.Empty;
+
+    [JsonPropertyName("data")]
+    public TvdbSeriesExtended? Data { get; set; }
+}
+
+public class TvdbSeriesExtended
+{
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("slug")]
+    public string Slug { get; set; } = string.Empty;
+
+    [JsonPropertyName("image")]
+    public string? Image { get; set; }
+
+    [JsonPropertyName("firstAired")]
+    public string? FirstAired { get; set; }
+
+    [JsonPropertyName("overview")]
+    public string? Overview { get; set; }
+
+    [JsonPropertyName("year")]
+    public string? Year { get; set; }
+
+    [JsonPropertyName("status")]
+    public TvdbStatus? Status { get; set; }
+
+    [JsonPropertyName("originalNetwork")]
+    public TvdbNetwork? OriginalNetwork { get; set; }
+
+    [JsonPropertyName("averageRuntime")]
+    public int? AverageRuntime { get; set; }
+
+    [JsonPropertyName("genres")]
+    public List<TvdbGenre>? Genres { get; set; }
+
+    [JsonPropertyName("seasons")]
+    public List<TvdbSeason>? Seasons { get; set; }
+
+    [JsonPropertyName("episodes")]
+    public List<TvdbEpisode>? Episodes { get; set; }
+
+    [JsonPropertyName("remoteIds")]
+    public List<TvdbRemoteId>? RemoteIds { get; set; }
+
+    public string? ImdbId => RemoteIds?.FirstOrDefault(r => r.SourceName == "IMDB")?.Id;
+}
+
+public class TvdbStatus
+{
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+}
+
+public class TvdbNetwork
+{
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+}
+
+public class TvdbGenre
+{
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+}
+
+public class TvdbSeason
+{
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+
+    [JsonPropertyName("seriesId")]
+    public int SeriesId { get; set; }
+
+    [JsonPropertyName("number")]
+    public int Number { get; set; }
+
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+
+    [JsonPropertyName("image")]
+    public string? Image { get; set; }
+
+    [JsonPropertyName("type")]
+    public TvdbSeasonType? Type { get; set; }
+}
+
+public class TvdbSeasonType
+{
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = string.Empty;
+}
+
+public class TvdbEpisode
+{
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+
+    [JsonPropertyName("seriesId")]
+    public int SeriesId { get; set; }
+
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+
+    [JsonPropertyName("seasonNumber")]
+    public int SeasonNumber { get; set; }
+
+    [JsonPropertyName("number")]
+    public int Number { get; set; }
+
+    [JsonPropertyName("overview")]
+    public string? Overview { get; set; }
+
+    [JsonPropertyName("image")]
+    public string? Image { get; set; }
+
+    [JsonPropertyName("aired")]
+    public string? Aired { get; set; }
+
+    [JsonPropertyName("runtime")]
+    public int? Runtime { get; set; }
+}
+
+public class TvdbRemoteId
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("type")]
+    public int Type { get; set; }
+
+    [JsonPropertyName("sourceName")]
+    public string SourceName { get; set; } = string.Empty;
+}

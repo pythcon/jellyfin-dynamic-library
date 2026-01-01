@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dynamic Library</title>
+</head>
+<body>
+  <div data-role="page" id="dynamicLibraryConfigPage" class="page type-interior pluginConfigurationPage">
+    <div data-role="content">
+      <div class="content-primary">
+        <form id="dynamicLibraryForm">
+          <div class="verticalSection">
+            <div class="sectionTitleContainer flex align-items-center">
+              <h2 class="sectionTitle">Dynamic Library</h2>
+            </div>
+            <p class="fieldDescription">
+              Create an infinite library by searching TVDB and TMDB for content not in your library.
+              When you click on a result, Embedarr will generate STRM files automatically.
+            </p>
+          </div>
+
+          <div class="verticalSection">
+            <div class="checkboxContainer checkboxContainer-withDescription">
+              <label>
+                <input is="emby-checkbox" type="checkbox" id="chkEnabled" />
+                <span>Enable Dynamic Library</span>
+              </label>
+              <div class="fieldDescription">Enable or disable the plugin globally.</div>
+            </div>
+          </div>
+
+          <div class="verticalSection">
+            <h3 class="sectionTitle">API Keys</h3>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtTvdbApiKey">TVDB API Key:</label>
+              <input is="emby-input" type="password" id="txtTvdbApiKey" class="emby-input" />
+              <div class="fieldDescription">
+                API key for TVDB (used for TV shows and anime).
+                Get one at <a href="https://thetvdb.com/api-information" target="_blank">thetvdb.com</a>.
+              </div>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtTmdbApiKey">TMDB API Key:</label>
+              <input is="emby-input" type="password" id="txtTmdbApiKey" class="emby-input" />
+              <div class="fieldDescription">
+                API key for TMDB (used for movies).
+                Get one at <a href="https://www.themoviedb.org/settings/api" target="_blank">themoviedb.org</a>.
+              </div>
+            </div>
+          </div>
+
+          <div class="verticalSection">
+            <h3 class="sectionTitle">Embedarr Integration</h3>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtEmbedarrUrl">Embedarr URL:</label>
+              <input is="emby-input" type="text" id="txtEmbedarrUrl" class="emby-input" placeholder="http://localhost:8080" />
+              <div class="fieldDescription">URL to your Embedarr instance for STRM file generation.</div>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtEmbedarrApiKey">Embedarr API Key:</label>
+              <input is="emby-input" type="password" id="txtEmbedarrApiKey" class="emby-input" />
+              <div class="fieldDescription">API key for Embedarr (if required).</div>
+            </div>
+          </div>
+
+          <div class="verticalSection">
+            <h3 class="sectionTitle">Library Paths</h3>
+            <p class="fieldDescription">
+              These paths tell Embedarr where to create STRM files. They should match your Jellyfin library folders.
+            </p>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtMovieLibraryPath">Movie Library Path:</label>
+              <input is="emby-input" type="text" id="txtMovieLibraryPath" class="emby-input" placeholder="/media/movies" />
+              <div class="fieldDescription">Path where movie STRM files should be created.</div>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtTvLibraryPath">TV Library Path:</label>
+              <input is="emby-input" type="text" id="txtTvLibraryPath" class="emby-input" placeholder="/media/tv" />
+              <div class="fieldDescription">Path where TV show STRM files should be created.</div>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtAnimeLibraryPath">Anime Library Path:</label>
+              <input is="emby-input" type="text" id="txtAnimeLibraryPath" class="emby-input" placeholder="/media/anime" />
+              <div class="fieldDescription">Path where anime STRM files should be created.</div>
+            </div>
+          </div>
+
+          <div class="verticalSection">
+            <h3 class="sectionTitle">Search Options</h3>
+
+            <div class="checkboxContainer">
+              <label>
+                <input is="emby-checkbox" type="checkbox" id="chkSearchMovies" />
+                <span>Search Movies (TMDB)</span>
+              </label>
+            </div>
+
+            <div class="checkboxContainer">
+              <label>
+                <input is="emby-checkbox" type="checkbox" id="chkSearchTvShows" />
+                <span>Search TV Shows (TVDB)</span>
+              </label>
+            </div>
+
+            <div class="checkboxContainer">
+              <label>
+                <input is="emby-checkbox" type="checkbox" id="chkSearchAnime" />
+                <span>Search Anime (TVDB)</span>
+              </label>
+            </div>
+
+            <div class="selectContainer">
+              <label class="selectLabel" for="selPreferredLanguage">Preferred Language:</label>
+              <select is="emby-select" id="selPreferredLanguage" class="emby-select">
+                <option value="eng">English</option>
+                <option value="jpn">Japanese</option>
+                <option value="spa">Spanish</option>
+                <option value="fra">French</option>
+                <option value="deu">German</option>
+                <option value="ita">Italian</option>
+                <option value="por">Portuguese</option>
+                <option value="rus">Russian</option>
+                <option value="zho">Chinese</option>
+                <option value="kor">Korean</option>
+              </select>
+              <div class="fieldDescription">Language for titles and metadata from TVDB/TMDB (if available).</div>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtMaxSearchResults">Max Search Results:</label>
+              <input is="emby-input" type="number" id="txtMaxSearchResults" class="emby-input" min="1" max="100" />
+              <div class="fieldDescription">Maximum number of results to return per API (1-100).</div>
+            </div>
+          </div>
+
+          <div class="verticalSection">
+            <h3 class="sectionTitle">Cache Settings</h3>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtCachePath">Cache Path:</label>
+              <input is="emby-input" type="text" id="txtCachePath" class="emby-input" placeholder="/tmp/dynamiclibrary" />
+              <div class="fieldDescription">Path for caching API responses (optional, improves performance).</div>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtCacheTtlMinutes">Cache TTL (minutes):</label>
+              <input is="emby-input" type="number" id="txtCacheTtlMinutes" class="emby-input" min="1" max="1440" />
+              <div class="fieldDescription">How long to cache search results (1-1440 minutes).</div>
+            </div>
+          </div>
+
+          <div>
+            <button id="btnSave" is="emby-button" type="submit" class="raised button-submit block emby-button">
+              <span>Save</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <script type="text/javascript">
+      (function () {
+        const pluginId = "A1B2C3D4-E5F6-7890-ABCD-EF1234567890";
+        const page = document.querySelector('#dynamicLibraryConfigPage');
+        const form = document.querySelector('#dynamicLibraryForm');
+
+        // Form elements
+        const chkEnabled = document.querySelector('#chkEnabled');
+        const txtTvdbApiKey = document.querySelector('#txtTvdbApiKey');
+        const txtTmdbApiKey = document.querySelector('#txtTmdbApiKey');
+        const txtEmbedarrUrl = document.querySelector('#txtEmbedarrUrl');
+        const txtEmbedarrApiKey = document.querySelector('#txtEmbedarrApiKey');
+        const txtMovieLibraryPath = document.querySelector('#txtMovieLibraryPath');
+        const txtTvLibraryPath = document.querySelector('#txtTvLibraryPath');
+        const txtAnimeLibraryPath = document.querySelector('#txtAnimeLibraryPath');
+        const chkSearchMovies = document.querySelector('#chkSearchMovies');
+        const chkSearchTvShows = document.querySelector('#chkSearchTvShows');
+        const chkSearchAnime = document.querySelector('#chkSearchAnime');
+        const txtMaxSearchResults = document.querySelector('#txtMaxSearchResults');
+        const selPreferredLanguage = document.querySelector('#selPreferredLanguage');
+        const txtCachePath = document.querySelector('#txtCachePath');
+        const txtCacheTtlMinutes = document.querySelector('#txtCacheTtlMinutes');
+
+        async function loadConfig() {
+          Dashboard.showLoadingMsg();
+          try {
+            const cfg = await window.ApiClient.getPluginConfiguration(pluginId);
+
+            chkEnabled.checked = cfg.Enabled ?? true;
+            txtTvdbApiKey.value = cfg.TvdbApiKey || '';
+            txtTmdbApiKey.value = cfg.TmdbApiKey || '';
+            txtEmbedarrUrl.value = cfg.EmbedarrUrl || '';
+            txtEmbedarrApiKey.value = cfg.EmbedarrApiKey || '';
+            txtMovieLibraryPath.value = cfg.MovieLibraryPath || '';
+            txtTvLibraryPath.value = cfg.TvLibraryPath || '';
+            txtAnimeLibraryPath.value = cfg.AnimeLibraryPath || '';
+            chkSearchMovies.checked = cfg.SearchMovies ?? true;
+            chkSearchTvShows.checked = cfg.SearchTvShows ?? true;
+            chkSearchAnime.checked = cfg.SearchAnime ?? true;
+            txtMaxSearchResults.value = cfg.MaxSearchResults || 20;
+            selPreferredLanguage.value = cfg.PreferredLanguage || 'eng';
+            txtCachePath.value = cfg.CachePath || '';
+            txtCacheTtlMinutes.value = cfg.CacheTtlMinutes || 60;
+          } catch (e) {
+            console.error('Error loading config:', e);
+          } finally {
+            Dashboard.hideLoadingMsg();
+          }
+        }
+
+        async function saveConfig(e) {
+          e.preventDefault();
+          Dashboard.showLoadingMsg();
+          try {
+            const cfg = await window.ApiClient.getPluginConfiguration(pluginId);
+
+            cfg.Enabled = chkEnabled.checked;
+            cfg.TvdbApiKey = txtTvdbApiKey.value.trim();
+            cfg.TmdbApiKey = txtTmdbApiKey.value.trim();
+            cfg.EmbedarrUrl = txtEmbedarrUrl.value.trim();
+            cfg.EmbedarrApiKey = txtEmbedarrApiKey.value.trim();
+            cfg.MovieLibraryPath = txtMovieLibraryPath.value.trim();
+            cfg.TvLibraryPath = txtTvLibraryPath.value.trim();
+            cfg.AnimeLibraryPath = txtAnimeLibraryPath.value.trim();
+            cfg.SearchMovies = chkSearchMovies.checked;
+            cfg.SearchTvShows = chkSearchTvShows.checked;
+            cfg.SearchAnime = chkSearchAnime.checked;
+            cfg.MaxSearchResults = parseInt(txtMaxSearchResults.value) || 20;
+            cfg.PreferredLanguage = selPreferredLanguage.value;
+            cfg.CachePath = txtCachePath.value.trim();
+            cfg.CacheTtlMinutes = parseInt(txtCacheTtlMinutes.value) || 60;
+
+            await window.ApiClient.updatePluginConfiguration(pluginId, cfg);
+            Dashboard.processPluginConfigurationUpdateResult();
+          } catch (e) {
+            console.error('Error saving config:', e);
+          } finally {
+            Dashboard.hideLoadingMsg();
+          }
+        }
+
+        function init() {
+          form.addEventListener('submit', saveConfig);
+          loadConfig();
+        }
+
+        page.addEventListener('pageshow', init);
+      })();
+    </script>
+  </div>
+</body>
+</html>
