@@ -94,9 +94,34 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
     }
 
     /// <summary>
-    /// Get the stream URL from Embedarr based on item type and configured ID preferences.
+    /// Get the stream URL based on configured stream provider.
     /// </summary>
     private async Task<string?> GetStreamUrlAsync(BaseItemDto item, CancellationToken cancellationToken)
+    {
+        var config = Config;
+
+        switch (config.StreamProvider)
+        {
+            case StreamProvider.None:
+                _logger.LogDebug("[DynamicLibrary] Stream provider is None, no streaming available");
+                return null;
+
+            case StreamProvider.Embedarr:
+                return await GetEmbedarrStreamUrlAsync(item, cancellationToken);
+
+            case StreamProvider.Direct:
+                return BuildDirectStreamUrl(item);
+
+            default:
+                _logger.LogWarning("[DynamicLibrary] Unknown stream provider: {Provider}", config.StreamProvider);
+                return null;
+        }
+    }
+
+    /// <summary>
+    /// Get the stream URL from Embedarr based on item type and configured ID preferences.
+    /// </summary>
+    private async Task<string?> GetEmbedarrStreamUrlAsync(BaseItemDto item, CancellationToken cancellationToken)
     {
         if (item.Type == BaseItemKind.Movie)
         {
@@ -110,6 +135,90 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
 
         _logger.LogWarning("[DynamicLibrary] Unsupported item type for playback: {Type}", item.Type);
         return null;
+    }
+
+    /// <summary>
+    /// Build a stream URL from templates for Direct mode.
+    /// </summary>
+    private string? BuildDirectStreamUrl(BaseItemDto item)
+    {
+        var config = Config;
+        string template;
+
+        if (item.Type == BaseItemKind.Movie)
+        {
+            template = config.DirectMovieUrlTemplate;
+            if (string.IsNullOrEmpty(template))
+            {
+                _logger.LogWarning("[DynamicLibrary] Direct movie URL template is not configured");
+                return null;
+            }
+
+            return ReplacePlaceholders(template, item, null, null);
+        }
+
+        if (item.Type == BaseItemKind.Episode)
+        {
+            // Get the series to determine if it's anime
+            var series = item.SeriesId.HasValue ? _itemCache.GetItem(item.SeriesId.Value) : null;
+            var isAnime = series != null && DynamicLibraryService.IsAnime(series);
+
+            template = isAnime ? config.DirectAnimeUrlTemplate : config.DirectTvUrlTemplate;
+            if (string.IsNullOrEmpty(template))
+            {
+                _logger.LogWarning("[DynamicLibrary] Direct {Type} URL template is not configured",
+                    isAnime ? "anime" : "TV");
+                return null;
+            }
+
+            var season = item.ParentIndexNumber ?? 1;
+            var episode = item.IndexNumber ?? 1;
+
+            return ReplacePlaceholders(template, item, season, episode, series);
+        }
+
+        _logger.LogWarning("[DynamicLibrary] Unsupported item type for Direct playback: {Type}", item.Type);
+        return null;
+    }
+
+    /// <summary>
+    /// Replace placeholders in URL template with actual values.
+    /// </summary>
+    private string ReplacePlaceholders(string template, BaseItemDto item, int? season, int? episode, BaseItemDto? series = null)
+    {
+        var config = Config;
+        var providerIds = item.ProviderIds ?? new Dictionary<string, string>();
+
+        // For episodes, prefer series provider IDs for the main ID
+        var seriesProviderIds = series?.ProviderIds ?? providerIds;
+
+        // Get preferred ID based on item type and config
+        string? preferredId = null;
+        if (item.Type == BaseItemKind.Movie)
+        {
+            var (id, _) = GetMovieId(item, config.MoviePreferredId);
+            preferredId = id;
+        }
+        else if (item.Type == BaseItemKind.Episode)
+        {
+            var isAnime = series != null && DynamicLibraryService.IsAnime(series);
+            var preference = isAnime ? config.AnimePreferredId : config.TvShowPreferredId;
+            var (id, _) = GetSeriesId(item, series, preference);
+            preferredId = id;
+        }
+
+        // Replace placeholders
+        var url = template
+            .Replace("{id}", preferredId ?? "", StringComparison.OrdinalIgnoreCase)
+            .Replace("{imdb}", seriesProviderIds.GetValueOrDefault("Imdb", ""), StringComparison.OrdinalIgnoreCase)
+            .Replace("{tmdb}", providerIds.GetValueOrDefault("Tmdb", ""), StringComparison.OrdinalIgnoreCase)
+            .Replace("{tvdb}", seriesProviderIds.GetValueOrDefault("Tvdb", ""), StringComparison.OrdinalIgnoreCase)
+            .Replace("{season}", season?.ToString() ?? "1", StringComparison.OrdinalIgnoreCase)
+            .Replace("{episode}", episode?.ToString() ?? "1", StringComparison.OrdinalIgnoreCase)
+            .Replace("{title}", Uri.EscapeDataString(item.Name ?? ""), StringComparison.OrdinalIgnoreCase);
+
+        _logger.LogDebug("[DynamicLibrary] Direct URL built: {Url}", url);
+        return url;
     }
 
     /// <summary>

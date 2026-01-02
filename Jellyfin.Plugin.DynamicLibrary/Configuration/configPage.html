@@ -53,7 +53,25 @@
           </div>
 
           <div class="verticalSection">
-            <h3 class="sectionTitle">Embedarr Integration</h3>
+            <h3 class="sectionTitle">Stream Provider</h3>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="selStreamProvider">Provider:</label>
+              <select is="emby-select" id="selStreamProvider" class="emby-select">
+                <option value="None">None (Browse Only)</option>
+                <option value="Embedarr">Embedarr</option>
+                <option value="Direct">Direct URL Templates</option>
+              </select>
+              <div class="fieldDescription">
+                None: Browse content without streaming capability.<br>
+                Embedarr: Use Embedarr to generate STRM files and stream.<br>
+                Direct: Use custom URL templates for direct streaming.
+              </div>
+            </div>
+          </div>
+
+          <div class="verticalSection" id="embedarrSettings" style="display: none;">
+            <h3 class="sectionTitle">Embedarr Settings</h3>
 
             <div class="inputContainer">
               <label class="inputLabel inputLabelUnfocused" for="txtEmbedarrUrl">Embedarr URL:</label>
@@ -76,6 +94,38 @@
                 When enabled, Embedarr will add media to the library when you view item details.
                 When disabled (default), media is only streamed on-demand when you click play.
               </div>
+            </div>
+          </div>
+
+          <div class="verticalSection" id="directSettings" style="display: none;">
+            <h3 class="sectionTitle">Direct URL Templates</h3>
+            <p class="fieldDescription" style="margin-bottom: 1em;">
+              Configure URL templates for direct streaming. Available placeholders:<br>
+              <code>{id}</code> - Preferred ID (based on Provider ID Preferences below)<br>
+              <code>{imdb}</code> - IMDB ID (e.g., tt1234567)<br>
+              <code>{tmdb}</code> - TMDB ID (numeric, movies only)<br>
+              <code>{tvdb}</code> - TVDB ID (numeric, TV/anime only)<br>
+              <code>{season}</code> - Season number<br>
+              <code>{episode}</code> - Episode number<br>
+              <code>{title}</code> - URL-encoded title
+            </p>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtDirectMovieUrl">Movie URL Template:</label>
+              <input is="emby-input" type="text" id="txtDirectMovieUrl" class="emby-input" placeholder="https://example.com/movie/{imdb}.m3u8" />
+              <div class="fieldDescription">Template for movie streams. Placeholders: {id}, {imdb}, {tmdb}, {title}</div>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtDirectTvUrl">TV Show URL Template:</label>
+              <input is="emby-input" type="text" id="txtDirectTvUrl" class="emby-input" placeholder="https://example.com/tv/{imdb}/{season}/{episode}.m3u8" />
+              <div class="fieldDescription">Template for TV episodes. Placeholders: {id}, {imdb}, {tvdb}, {season}, {episode}, {title}</div>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtDirectAnimeUrl">Anime URL Template:</label>
+              <input is="emby-input" type="text" id="txtDirectAnimeUrl" class="emby-input" placeholder="https://example.com/anime/{tvdb}/{season}/{episode}.m3u8" />
+              <div class="fieldDescription">Template for anime episodes. Placeholders: {id}, {imdb}, {tvdb}, {season}, {episode}, {title}</div>
             </div>
           </div>
 
@@ -241,17 +291,33 @@
         const txtMaxSearchResults = document.querySelector('#txtMaxSearchResults');
         const txtCacheTtlMinutes = document.querySelector('#txtCacheTtlMinutes');
 
+        // Cache DOM elements - Direct URL templates
+        const txtDirectMovieUrl = document.querySelector('#txtDirectMovieUrl');
+        const txtDirectTvUrl = document.querySelector('#txtDirectTvUrl');
+        const txtDirectAnimeUrl = document.querySelector('#txtDirectAnimeUrl');
+
         // Cache DOM elements - selects
+        const selStreamProvider = document.querySelector('#selStreamProvider');
         const selLanguageMode = document.querySelector('#selLanguageMode');
         const selPreferredLanguage = document.querySelector('#selPreferredLanguage');
         const selMoviePreferredId = document.querySelector('#selMoviePreferredId');
         const selTvShowPreferredId = document.querySelector('#selTvShowPreferredId');
         const selAnimePreferredId = document.querySelector('#selAnimePreferredId');
+
+        // Cache DOM elements - conditional containers
+        const embedarrSettings = document.querySelector('#embedarrSettings');
+        const directSettings = document.querySelector('#directSettings');
         const languageOverrideContainer = document.querySelector('#languageOverrideContainer');
 
         function updateLanguageVisibility() {
           const mode = selLanguageMode.value;
           languageOverrideContainer.style.display = mode === 'Override' ? 'block' : 'none';
+        }
+
+        function updateStreamProviderVisibility() {
+          const provider = selStreamProvider.value;
+          embedarrSettings.style.display = provider === 'Embedarr' ? 'block' : 'none';
+          directSettings.style.display = provider === 'Direct' ? 'block' : 'none';
         }
 
         // Helper to set select value - handles custom element timing
@@ -295,14 +361,21 @@
             txtMaxSearchResults.value = config.MaxSearchResults ?? 20;
             txtCacheTtlMinutes.value = config.CacheTtlMinutes ?? 60;
 
+            // Direct URL templates
+            txtDirectMovieUrl.value = config.DirectMovieUrlTemplate || '';
+            txtDirectTvUrl.value = config.DirectTvUrlTemplate || '';
+            txtDirectAnimeUrl.value = config.DirectAnimeUrlTemplate || '';
+
             // Select dropdowns - use helper to handle custom element timing
             // Enum values come as strings from C# JSON serialization
+            setSelectValue(selStreamProvider, config.StreamProvider || 'None');
             setSelectValue(selLanguageMode, config.LanguageMode || 'Default');
             setSelectValue(selPreferredLanguage, config.PreferredLanguage || 'eng');
             setSelectValue(selMoviePreferredId, config.MoviePreferredId || 'Imdb');
             setSelectValue(selTvShowPreferredId, config.TvShowPreferredId || 'Imdb');
             setSelectValue(selAnimePreferredId, config.AnimePreferredId || 'Imdb');
 
+            updateStreamProviderVisibility();
             updateLanguageVisibility();
           } catch (err) {
             console.error('Dynamic Library: Failed to load configuration', err);
@@ -335,7 +408,13 @@
             config.MaxSearchResults = parseInt(txtMaxSearchResults.value, 10) || 20;
             config.CacheTtlMinutes = parseInt(txtCacheTtlMinutes.value, 10) || 60;
 
+            // Direct URL templates
+            config.DirectMovieUrlTemplate = txtDirectMovieUrl.value.trim();
+            config.DirectTvUrlTemplate = txtDirectTvUrl.value.trim();
+            config.DirectAnimeUrlTemplate = txtDirectAnimeUrl.value.trim();
+
             // Select dropdowns - enum values are serialized as strings
+            config.StreamProvider = selStreamProvider.value;
             config.LanguageMode = selLanguageMode.value;
             config.PreferredLanguage = selPreferredLanguage.value;
             config.MoviePreferredId = selMoviePreferredId.value;
@@ -354,6 +433,7 @@
 
         // Set up event listeners once
         form.addEventListener('submit', saveConfig);
+        selStreamProvider.addEventListener('change', updateStreamProviderVisibility);
         selLanguageMode.addEventListener('change', updateLanguageVisibility);
 
         // Load config when page is shown (works with Jellyfin's SPA navigation)

@@ -1,4 +1,5 @@
 using Jellyfin.Data.Enums;
+using Jellyfin.Plugin.DynamicLibrary.Configuration;
 using Jellyfin.Plugin.DynamicLibrary.Services;
 using MediaBrowser.Model.Dto;
 using Microsoft.AspNetCore.Mvc;
@@ -100,11 +101,15 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
             cachedItem.Name, itemId);
 
         // Enrich with full details based on item type
+        var config = DynamicLibraryPlugin.Instance?.Configuration;
+        var shouldTriggerEmbedarr = config?.CreateMediaOnView == true &&
+                                    config?.StreamProvider == StreamProvider.Embedarr;
+
         if (cachedItem.Type == BaseItemKind.Movie)
         {
             cachedItem = await _searchResultFactory.EnrichMovieDtoAsync(cachedItem, context.HttpContext.RequestAborted);
-            // Trigger Embedarr in background (fire-and-forget) to add to library - if enabled
-            if (DynamicLibraryPlugin.Instance?.Configuration.CreateMediaOnView == true)
+            // Trigger Embedarr in background (fire-and-forget) to add to library - if enabled and using Embedarr provider
+            if (shouldTriggerEmbedarr)
             {
                 _ = TriggerEmbedarrAsync(cachedItem);
             }
@@ -112,8 +117,8 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
         else if (cachedItem.Type == BaseItemKind.Series)
         {
             cachedItem = await _searchResultFactory.EnrichSeriesDtoAsync(cachedItem, context.HttpContext.RequestAborted);
-            // Trigger Embedarr in background (fire-and-forget) to add to library - if enabled
-            if (DynamicLibraryPlugin.Instance?.Configuration.CreateMediaOnView == true)
+            // Trigger Embedarr in background (fire-and-forget) to add to library - if enabled and using Embedarr provider
+            if (shouldTriggerEmbedarr)
             {
                 _ = TriggerEmbedarrAsync(cachedItem);
             }

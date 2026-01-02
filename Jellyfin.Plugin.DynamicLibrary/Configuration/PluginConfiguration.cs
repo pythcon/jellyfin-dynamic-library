@@ -29,6 +29,21 @@ public enum LanguageMode
     Override = 1
 }
 
+/// <summary>
+/// Stream provider selection for playback.
+/// </summary>
+public enum StreamProvider
+{
+    /// <summary>No streaming - just browse metadata.</summary>
+    None = 0,
+
+    /// <summary>Use Embedarr API for STRM generation.</summary>
+    Embedarr = 1,
+
+    /// <summary>Use URL templates directly for streaming.</summary>
+    Direct = 2
+}
+
 public class PluginConfiguration : BasePluginConfiguration
 {
     /// <summary>
@@ -87,6 +102,32 @@ public class PluginConfiguration : BasePluginConfiguration
     /// Default is false.
     /// </summary>
     public bool CreateMediaOnView { get; set; } = false;
+
+    // ==================== Stream Provider Settings ====================
+
+    /// <summary>
+    /// Gets or sets the stream provider for playback.
+    /// None = browse only, Embedarr = use Embedarr API, Direct = use URL templates.
+    /// </summary>
+    public StreamProvider StreamProvider { get; set; } = StreamProvider.None;
+
+    /// <summary>
+    /// Gets or sets the URL template for movie streams in Direct mode.
+    /// Placeholders: {id} (preferred ID), {imdb}, {tmdb}, {title}
+    /// </summary>
+    public string DirectMovieUrlTemplate { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the URL template for TV show streams in Direct mode.
+    /// Placeholders: {id} (preferred ID), {imdb}, {tvdb}, {season}, {episode}, {title}
+    /// </summary>
+    public string DirectTvUrlTemplate { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the URL template for anime streams in Direct mode.
+    /// Placeholders: {id} (preferred ID), {imdb}, {tvdb}, {season}, {episode}, {title}
+    /// </summary>
+    public string DirectAnimeUrlTemplate { get; set; } = string.Empty;
 
     // ==================== Language Settings ====================
 
