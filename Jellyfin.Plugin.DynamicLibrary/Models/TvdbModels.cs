@@ -70,16 +70,44 @@ public class TvdbSearchResult
     [JsonPropertyName("translations")]
     public Dictionary<string, string>? Translations { get; set; }
 
+    [JsonPropertyName("overviews")]
+    public Dictionary<string, string>? Overviews { get; set; }
+
     public int TvdbIdInt => int.TryParse(TvdbId, out var id) ? id : 0;
+
+    /// <summary>
+    /// Gets the localized name for the specified language code.
+    /// Falls back to the default Name if translation is not available.
+    /// </summary>
+    /// <param name="languageCode">3-letter ISO 639-2 code (e.g., "eng", "jpn")</param>
+    public string GetLocalizedName(string? languageCode)
+    {
+        if (string.IsNullOrEmpty(languageCode))
+        {
+            return Name;
+        }
+
+        if (Translations?.TryGetValue(languageCode, out var translated) == true
+            && !string.IsNullOrEmpty(translated))
+        {
+            return translated;
+        }
+        return Name;
+    }
 
     /// <summary>
     /// Gets the localized overview for the specified language code.
     /// Falls back to the default Overview if translation is not available.
     /// </summary>
     /// <param name="languageCode">3-letter ISO 639-2 code (e.g., "eng", "jpn")</param>
-    public string? GetLocalizedOverview(string languageCode)
+    public string? GetLocalizedOverview(string? languageCode)
     {
-        if (Translations?.TryGetValue(languageCode, out var translated) == true
+        if (string.IsNullOrEmpty(languageCode))
+        {
+            return Overview;
+        }
+
+        if (Overviews?.TryGetValue(languageCode, out var translated) == true
             && !string.IsNullOrEmpty(translated))
         {
             return translated;
@@ -141,7 +169,35 @@ public class TvdbSeriesExtended
     [JsonPropertyName("remoteIds")]
     public List<TvdbRemoteId>? RemoteIds { get; set; }
 
+    /// <summary>
+    /// List of available language codes for name translations.
+    /// Actual translations must be fetched via /series/{id}/translations/{language}
+    /// </summary>
+    [JsonPropertyName("nameTranslations")]
+    public List<string>? NameTranslations { get; set; }
+
+    /// <summary>
+    /// List of available language codes for overview translations.
+    /// Actual translations must be fetched via /series/{id}/translations/{language}
+    /// </summary>
+    [JsonPropertyName("overviewTranslations")]
+    public List<string>? OverviewTranslations { get; set; }
+
+    /// <summary>
+    /// Fetched translation data (populated separately via translation API call).
+    /// </summary>
+    [JsonIgnore]
+    public TvdbTranslationData? Translation { get; set; }
+
     public string? ImdbId => RemoteIds?.FirstOrDefault(r => r.SourceName == "IMDB")?.Id;
+
+    /// <summary>
+    /// Check if a translation is available for the given language.
+    /// </summary>
+    public bool HasTranslation(string languageCode)
+    {
+        return NameTranslations?.Contains(languageCode, StringComparer.OrdinalIgnoreCase) == true;
+    }
 }
 
 public class TvdbStatus
@@ -244,4 +300,40 @@ public class TvdbRemoteId
 
     [JsonPropertyName("sourceName")]
     public string SourceName { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Response from /series/{id}/translations/{language} endpoint.
+/// </summary>
+public class TvdbTranslationResponse
+{
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = string.Empty;
+
+    [JsonPropertyName("data")]
+    public TvdbTranslationData? Data { get; set; }
+}
+
+/// <summary>
+/// Translation data for a specific language.
+/// </summary>
+public class TvdbTranslationData
+{
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+
+    [JsonPropertyName("overview")]
+    public string? Overview { get; set; }
+
+    [JsonPropertyName("language")]
+    public string? Language { get; set; }
+
+    [JsonPropertyName("aliases")]
+    public List<string>? Aliases { get; set; }
+
+    [JsonPropertyName("isAlias")]
+    public bool IsAlias { get; set; }
+
+    [JsonPropertyName("isPrimary")]
+    public bool IsPrimary { get; set; }
 }

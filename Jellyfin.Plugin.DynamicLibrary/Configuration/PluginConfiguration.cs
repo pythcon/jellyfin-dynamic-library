@@ -2,6 +2,33 @@ using MediaBrowser.Model.Plugins;
 
 namespace Jellyfin.Plugin.DynamicLibrary.Configuration;
 
+/// <summary>
+/// Preferred provider ID for Embedarr lookups.
+/// </summary>
+public enum PreferredProviderId
+{
+    /// <summary>IMDB ID (tt1234567 format). Most widely supported.</summary>
+    Imdb = 0,
+
+    /// <summary>TMDB ID (numeric). Available for movies from TMDB.</summary>
+    Tmdb = 1,
+
+    /// <summary>TVDB ID (numeric). Available for TV/anime from TVDB.</summary>
+    Tvdb = 2
+}
+
+/// <summary>
+/// Language preference mode.
+/// </summary>
+public enum LanguageMode
+{
+    /// <summary>Use the original language from the API (no translation requests).</summary>
+    Default = 0,
+
+    /// <summary>Request content in the specified language.</summary>
+    Override = 1
+}
+
 public class PluginConfiguration : BasePluginConfiguration
 {
     /// <summary>
@@ -23,26 +50,6 @@ public class PluginConfiguration : BasePluginConfiguration
     /// Gets or sets the Embedarr API key (if required).
     /// </summary>
     public string EmbedarrApiKey { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Gets or sets the path where movie STRM files should be created.
-    /// </summary>
-    public string MovieLibraryPath { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Gets or sets the path where TV show STRM files should be created.
-    /// </summary>
-    public string TvLibraryPath { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Gets or sets the path where anime STRM files should be created.
-    /// </summary>
-    public string AnimeLibraryPath { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Gets or sets the path for caching API responses.
-    /// </summary>
-    public string CachePath { get; set; } = string.Empty;
 
     /// <summary>
     /// Gets or sets the cache TTL in minutes.
@@ -75,9 +82,121 @@ public class PluginConfiguration : BasePluginConfiguration
     public int MaxSearchResults { get; set; } = 20;
 
     /// <summary>
-    /// Gets or sets the preferred language for metadata.
+    /// Gets or sets a value indicating whether to automatically add media to Embedarr
+    /// when viewing item details. When false, media is only added on-demand at playback time.
+    /// Default is false.
+    /// </summary>
+    public bool CreateMediaOnView { get; set; } = false;
+
+    // ==================== Language Settings ====================
+
+    /// <summary>
+    /// Gets or sets the language mode.
+    /// Default = use original language from API.
+    /// Override = force the specified language.
+    /// </summary>
+    public LanguageMode LanguageMode { get; set; } = LanguageMode.Default;
+
+    /// <summary>
+    /// Gets or sets the preferred language for metadata when LanguageMode is Override.
     /// Uses 3-letter ISO 639-2 codes (eng, jpn, spa, fra, deu).
-    /// Default is English.
     /// </summary>
     public string PreferredLanguage { get; set; } = "eng";
+
+    // ==================== Provider ID Preferences ====================
+    // These control which ID is used when calling Embedarr for playback.
+    // Note: IMDB is the most universally available and recommended default.
+
+    /// <summary>
+    /// Gets or sets the preferred provider ID for movie lookups.
+    /// Available options: IMDB (from TMDB details), TMDB (always available).
+    /// Default: IMDB.
+    /// </summary>
+    public PreferredProviderId MoviePreferredId { get; set; } = PreferredProviderId.Imdb;
+
+    /// <summary>
+    /// Gets or sets the preferred provider ID for TV show lookups.
+    /// Available options: IMDB (from TVDB RemoteIds), TVDB (always available).
+    /// Default: IMDB.
+    /// </summary>
+    public PreferredProviderId TvShowPreferredId { get; set; } = PreferredProviderId.Imdb;
+
+    /// <summary>
+    /// Gets or sets the preferred provider ID for anime lookups.
+    /// Available options: IMDB (from TVDB RemoteIds), TVDB (always available).
+    /// Note: AniList/AniDB IDs are available in TVDB but not commonly used by Embedarr.
+    /// Default: IMDB.
+    /// </summary>
+    public PreferredProviderId AnimePreferredId { get; set; } = PreferredProviderId.Imdb;
+
+    // ==================== Helper Methods ====================
+
+    /// <summary>
+    /// Gets the effective language code for API requests.
+    /// Returns null if LanguageMode is Default (use original).
+    /// </summary>
+    public string? GetEffectiveLanguage()
+    {
+        return LanguageMode == LanguageMode.Override ? PreferredLanguage : null;
+    }
+
+    /// <summary>
+    /// Gets the 2-letter ISO 639-1 language code for TMDB API.
+    /// Returns null if LanguageMode is Default.
+    /// </summary>
+    public string? GetTmdbLanguageCode()
+    {
+        if (LanguageMode != LanguageMode.Override)
+        {
+            return null;
+        }
+
+        return PreferredLanguage.ToLowerInvariant() switch
+        {
+            "eng" => "en",
+            "jpn" => "ja",
+            "spa" => "es",
+            "fra" => "fr",
+            "deu" => "de",
+            "ita" => "it",
+            "por" => "pt",
+            "rus" => "ru",
+            "zho" => "zh",
+            "kor" => "ko",
+            "ara" => "ar",
+            "hin" => "hi",
+            "tha" => "th",
+            "vie" => "vi",
+            "nld" => "nl",
+            "pol" => "pl",
+            "tur" => "tr",
+            "swe" => "sv",
+            "nor" => "no",
+            "dan" => "da",
+            "fin" => "fi",
+            "ces" => "cs",
+            "hun" => "hu",
+            "ron" => "ro",
+            "ell" => "el",
+            "heb" => "he",
+            "ind" => "id",
+            "msa" => "ms",
+            "ukr" => "uk",
+            _ => "en" // Default to English if unknown
+        };
+    }
+
+    /// <summary>
+    /// Gets the 3-letter ISO 639-2 language code for TVDB API.
+    /// Returns null if LanguageMode is Default.
+    /// </summary>
+    public string? GetTvdbLanguageCode()
+    {
+        if (LanguageMode != LanguageMode.Override)
+        {
+            return null;
+        }
+
+        return PreferredLanguage;
+    }
 }

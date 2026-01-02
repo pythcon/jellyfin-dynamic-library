@@ -65,11 +65,14 @@ public sealed class DynamicUri
 
     /// <summary>
     /// Generate a stable GUID from this URI for use as a Jellyfin item ID.
+    /// Uses a unique prefix to avoid collisions with real Jellyfin items.
     /// </summary>
     public Guid ToGuid()
     {
+        // Add unique prefix to avoid GUID collisions with real Jellyfin items
+        const string UniquePrefix = "jellyfin-dynamiclibrary-plugin:";
         using var md5 = MD5.Create();
-        var hash = md5.ComputeHash(Encoding.UTF8.GetBytes(ToString()));
+        var hash = md5.ComputeHash(Encoding.UTF8.GetBytes(UniquePrefix + ToString()));
         return new Guid(hash);
     }
 

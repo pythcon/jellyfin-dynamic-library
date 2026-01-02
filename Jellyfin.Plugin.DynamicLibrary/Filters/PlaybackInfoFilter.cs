@@ -1,0 +1,313 @@
+using System.Linq;
+using Jellyfin.Data.Enums;
+using Jellyfin.Plugin.DynamicLibrary.Api;
+using Jellyfin.Plugin.DynamicLibrary.Configuration;
+using Jellyfin.Plugin.DynamicLibrary.Services;
+using MediaBrowser.Model.Dto;
+using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.MediaInfo;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Controllers;
+using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.Extensions.Logging;
+
+namespace Jellyfin.Plugin.DynamicLibrary.Filters;
+
+/// <summary>
+/// Filter that intercepts playback info requests for dynamic items
+/// and returns media source info with stream URL from Embedarr.
+/// </summary>
+public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
+{
+    private readonly DynamicItemCache _itemCache;
+    private readonly IEmbedarrClient _embedarrClient;
+    private readonly ILogger<PlaybackInfoFilter> _logger;
+
+    private static readonly HashSet<string> PlaybackInfoActions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "GetPlaybackInfo",
+        "GetPostedPlaybackInfo"
+    };
+
+    public PlaybackInfoFilter(
+        DynamicItemCache itemCache,
+        IEmbedarrClient embedarrClient,
+        ILogger<PlaybackInfoFilter> logger)
+    {
+        _itemCache = itemCache;
+        _embedarrClient = embedarrClient;
+        _logger = logger;
+    }
+
+    // Run early to intercept before Jellyfin tries to look up the item
+    public int Order => 0;
+
+    private PluginConfiguration Config => DynamicLibraryPlugin.Instance?.Configuration ?? new PluginConfiguration();
+
+    public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
+    {
+        var actionName = (context.ActionDescriptor as ControllerActionDescriptor)?.ActionName;
+        var controllerName = (context.ActionDescriptor as ControllerActionDescriptor)?.ControllerName;
+
+        // Check if this is a playback info action on MediaInfo controller
+        if (controllerName != "MediaInfo" || actionName == null || !PlaybackInfoActions.Contains(actionName))
+        {
+            await next();
+            return;
+        }
+
+        // Get item ID from route
+        if (!context.ActionArguments.TryGetValue("itemId", out var itemIdObj) || itemIdObj is not Guid itemId)
+        {
+            await next();
+            return;
+        }
+
+        // Check if this is a dynamic item
+        var cachedItem = _itemCache.GetItem(itemId);
+        if (cachedItem == null)
+        {
+            await next();
+            return;
+        }
+
+        _logger.LogDebug("[DynamicLibrary] Intercepting PlaybackInfo for dynamic item: {Name} ({Id})",
+            cachedItem.Name, itemId);
+
+        // Get stream URL from Embedarr
+        var streamUrl = await GetStreamUrlAsync(cachedItem, context.HttpContext.RequestAborted);
+
+        if (string.IsNullOrEmpty(streamUrl))
+        {
+            _logger.LogWarning("[DynamicLibrary] No stream URL available for {Name}, playback may fail", cachedItem.Name);
+            // Let Jellyfin handle it - will likely fail but at least gives an error
+            await next();
+            return;
+        }
+
+        _logger.LogDebug("[DynamicLibrary] Got stream URL for {Name}: {Url}", cachedItem.Name, streamUrl);
+
+        // Build PlaybackInfoResponse with the stream URL
+        var response = BuildPlaybackInfoResponse(cachedItem, streamUrl);
+
+        context.Result = new OkObjectResult(response);
+    }
+
+    /// <summary>
+    /// Get the stream URL from Embedarr based on item type and configured ID preferences.
+    /// </summary>
+    private async Task<string?> GetStreamUrlAsync(BaseItemDto item, CancellationToken cancellationToken)
+    {
+        if (item.Type == BaseItemKind.Movie)
+        {
+            return await GetMovieStreamUrlAsync(item, cancellationToken);
+        }
+
+        if (item.Type == BaseItemKind.Episode)
+        {
+            return await GetEpisodeStreamUrlAsync(item, cancellationToken);
+        }
+
+        _logger.LogWarning("[DynamicLibrary] Unsupported item type for playback: {Type}", item.Type);
+        return null;
+    }
+
+    /// <summary>
+    /// Get stream URL for a movie using configured ID preference.
+    /// </summary>
+    private async Task<string?> GetMovieStreamUrlAsync(BaseItemDto item, CancellationToken cancellationToken)
+    {
+        var config = Config;
+        var preferredId = config.MoviePreferredId;
+
+        _logger.LogDebug("[DynamicLibrary] Movie playback: {Name}, PreferredId={PreferredId}, ProviderIds={ProviderIds}",
+            item.Name, preferredId,
+            item.ProviderIds != null ? string.Join(", ", item.ProviderIds.Select(p => $"{p.Key}={p.Value}")) : "null");
+
+        // Get the ID based on preference with fallback
+        var (id, idType) = GetMovieId(item, preferredId);
+
+        if (string.IsNullOrEmpty(id))
+        {
+            _logger.LogWarning("[DynamicLibrary] No suitable ID found for movie: {Name}", item.Name);
+            return null;
+        }
+
+        _logger.LogDebug("[DynamicLibrary] Using {IdType} ID for movie {Name}: {Id}", idType, item.Name, id);
+
+        var result = await _embedarrClient.GetMovieStreamUrlAsync(id, cancellationToken);
+        return result?.Url;
+    }
+
+    /// <summary>
+    /// Get stream URL for an episode using configured ID preference.
+    /// </summary>
+    private async Task<string?> GetEpisodeStreamUrlAsync(BaseItemDto item, CancellationToken cancellationToken)
+    {
+        var config = Config;
+
+        // Get the series to determine if it's anime
+        var series = item.SeriesId.HasValue ? _itemCache.GetItem(item.SeriesId.Value) : null;
+        var isAnime = series != null && DynamicLibraryService.IsAnime(series);
+
+        // Use anime or TV show preference based on content type
+        var preferredId = isAnime ? config.AnimePreferredId : config.TvShowPreferredId;
+
+        _logger.LogDebug("[DynamicLibrary] Episode playback: {Name}, IsAnime={IsAnime}, PreferredId={PreferredId}",
+            item.Name, isAnime, preferredId);
+        _logger.LogDebug("[DynamicLibrary] Episode ProviderIds: {ProviderIds}",
+            item.ProviderIds != null ? string.Join(", ", item.ProviderIds.Select(p => $"{p.Key}={p.Value}")) : "null");
+        _logger.LogDebug("[DynamicLibrary] Series: {SeriesName}, ProviderIds={ProviderIds}",
+            series?.Name ?? "null",
+            series?.ProviderIds != null ? string.Join(", ", series.ProviderIds.Select(p => $"{p.Key}={p.Value}")) : "null");
+
+        // Get the ID based on preference with fallback
+        var (id, idType) = GetSeriesId(item, series, preferredId);
+
+        if (string.IsNullOrEmpty(id))
+        {
+            _logger.LogWarning("[DynamicLibrary] No suitable ID found for episode: {Name} (isAnime={IsAnime})", item.Name, isAnime);
+            return null;
+        }
+
+        var season = item.ParentIndexNumber ?? 1;
+        var episode = item.IndexNumber ?? 1;
+
+        // Warn if using fallback values
+        if (!item.ParentIndexNumber.HasValue)
+        {
+            _logger.LogWarning("[DynamicLibrary] Episode {Name} has no season number, defaulting to 1", item.Name);
+        }
+        if (!item.IndexNumber.HasValue)
+        {
+            _logger.LogWarning("[DynamicLibrary] Episode {Name} has no episode number, defaulting to 1", item.Name);
+        }
+
+        _logger.LogDebug("[DynamicLibrary] Calling Embedarr: GET /api/url/tv/{Id}/{Season}/{Episode} (IdType={IdType}, IsAnime={IsAnime})",
+            id, season, episode, idType, isAnime);
+
+        var result = await _embedarrClient.GetTvEpisodeStreamUrlAsync(id, season, episode, cancellationToken);
+
+        _logger.LogDebug("[DynamicLibrary] Embedarr response: Url={Url}", result?.Url ?? "null");
+
+        return result?.Url;
+    }
+
+    /// <summary>
+    /// Get the movie ID based on preference with fallback.
+    /// Movies can have: IMDB, TMDB
+    /// </summary>
+    private (string? Id, string IdType) GetMovieId(BaseItemDto item, PreferredProviderId preference)
+    {
+        if (item.ProviderIds == null)
+        {
+            return (null, "none");
+        }
+
+        // Try preferred ID first
+        switch (preference)
+        {
+            case PreferredProviderId.Imdb:
+                if (item.ProviderIds.TryGetValue("Imdb", out var imdbId) && !string.IsNullOrEmpty(imdbId))
+                {
+                    return (imdbId, "IMDB");
+                }
+                // Fallback to TMDB
+                if (item.ProviderIds.TryGetValue("Tmdb", out var tmdbFallback) && !string.IsNullOrEmpty(tmdbFallback))
+                {
+                    return (tmdbFallback, "TMDB");
+                }
+                break;
+
+            case PreferredProviderId.Tmdb:
+                if (item.ProviderIds.TryGetValue("Tmdb", out var tmdbId) && !string.IsNullOrEmpty(tmdbId))
+                {
+                    return (tmdbId, "TMDB");
+                }
+                // Fallback to IMDB
+                if (item.ProviderIds.TryGetValue("Imdb", out var imdbFallback) && !string.IsNullOrEmpty(imdbFallback))
+                {
+                    return (imdbFallback, "IMDB");
+                }
+                break;
+        }
+
+        return (null, "none");
+    }
+
+    /// <summary>
+    /// Get the series ID for an episode based on preference with fallback.
+    /// TV/Anime can have: IMDB, TVDB
+    /// </summary>
+    private (string? Id, string IdType) GetSeriesId(BaseItemDto episode, BaseItemDto? series, PreferredProviderId preference)
+    {
+        // Try to get IDs from series first (preferred), then from episode
+        var providerIds = series?.ProviderIds ?? episode.ProviderIds;
+
+        if (providerIds == null)
+        {
+            return (null, "none");
+        }
+
+        // Try preferred ID first
+        switch (preference)
+        {
+            case PreferredProviderId.Imdb:
+                if (providerIds.TryGetValue("Imdb", out var imdbId) && !string.IsNullOrEmpty(imdbId))
+                {
+                    return (imdbId, "IMDB");
+                }
+                // Fallback to TVDB
+                if (providerIds.TryGetValue("Tvdb", out var tvdbFallback) && !string.IsNullOrEmpty(tvdbFallback))
+                {
+                    return (tvdbFallback, "TVDB");
+                }
+                break;
+
+            case PreferredProviderId.Tvdb:
+                if (providerIds.TryGetValue("Tvdb", out var tvdbId) && !string.IsNullOrEmpty(tvdbId))
+                {
+                    return (tvdbId, "TVDB");
+                }
+                // Fallback to IMDB
+                if (providerIds.TryGetValue("Imdb", out var imdbFallback) && !string.IsNullOrEmpty(imdbFallback))
+                {
+                    return (imdbFallback, "IMDB");
+                }
+                break;
+        }
+
+        return (null, "none");
+    }
+
+    private PlaybackInfoResponse BuildPlaybackInfoResponse(BaseItemDto item, string streamUrl)
+    {
+        var mediaSourceId = item.Id.ToString("N"); // GUID without hyphens
+
+        return new PlaybackInfoResponse
+        {
+            MediaSources = new[]
+            {
+                new MediaSourceInfo
+                {
+                    Id = mediaSourceId,
+                    Path = streamUrl,
+                    Name = item.Name,
+                    Protocol = MediaProtocol.Http,
+                    Type = MediaSourceType.Default,
+                    Container = "hls",
+                    IsRemote = true,
+                    SupportsDirectPlay = true,
+                    SupportsDirectStream = true,
+                    SupportsTranscoding = false,
+                    SupportsProbing = false,
+                    RequiresOpening = false,
+                    RequiresClosing = false,
+                    RunTimeTicks = item.RunTimeTicks,
+                    MediaStreams = new List<MediaStream>()
+                }
+            },
+            PlaySessionId = Guid.NewGuid().ToString("N")
+        };
+    }
+}

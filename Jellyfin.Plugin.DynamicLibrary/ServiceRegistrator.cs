@@ -29,19 +29,23 @@ public class ServiceRegistrator : IPluginServiceRegistrator
         services.AddSingleton<DynamicLibraryService>();
 
         // Register filters
+        services.AddSingleton<RequestLoggerFilter>();
         services.AddSingleton<SearchActionFilter>();
         services.AddSingleton<ItemLookupFilter>();
         services.AddSingleton<ImageFilter>();
         services.AddSingleton<DynamicItemEndpointsFilter>();
         services.AddSingleton<SeasonEpisodeFilter>();
+        services.AddSingleton<PlaybackInfoFilter>();
 
         // Register filters with MVC
         services.PostConfigure<Microsoft.AspNetCore.Mvc.MvcOptions>(options =>
         {
+            options.Filters.AddService<RequestLoggerFilter>(order: -100);       // Log ALL requests first (debug)
             options.Filters.AddService<ImageFilter>(order: 0);                  // Run first for images
             options.Filters.AddService<ItemLookupFilter>(order: 0);             // Run first for item lookups
             options.Filters.AddService<DynamicItemEndpointsFilter>(order: 0);   // Handle secondary endpoints
             options.Filters.AddService<SeasonEpisodeFilter>(order: 0);          // Handle seasons/episodes
+            options.Filters.AddService<PlaybackInfoFilter>(order: 0);           // Handle playback info for dynamic items
             options.Filters.AddService<SearchActionFilter>(order: 1);
         });
     }

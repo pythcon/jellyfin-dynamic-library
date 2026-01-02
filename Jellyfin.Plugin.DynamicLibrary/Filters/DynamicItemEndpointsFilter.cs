@@ -60,8 +60,16 @@ public class DynamicItemEndpointsFilter : IAsyncActionFilter, IOrderedFilter
             return;
         }
 
-        // Check if this is a dynamic item
-        if (!_itemCache.HasItem(itemId))
+        // Check if this is a dynamic item in our cache
+        var cachedItem = _itemCache.GetItem(itemId);
+        if (cachedItem == null)
+        {
+            await next();
+            return;
+        }
+
+        // Verify this is actually a dynamic item by checking for our provider ID
+        if (!SearchResultFactory.IsDynamicItem(cachedItem))
         {
             await next();
             return;

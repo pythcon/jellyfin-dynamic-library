@@ -1,6 +1,6 @@
-using System.Linq;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.DynamicLibrary.Services;
+using MediaBrowser.Model.Dto;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Filters;
@@ -11,11 +11,13 @@ namespace Jellyfin.Plugin.DynamicLibrary.Filters;
 /// <summary>
 /// Filter that intercepts item lookup requests and returns cached data
 /// for dynamic (virtual) items that don't exist in Jellyfin's database.
+/// Also triggers Embedarr to add items to the library when user views item details.
 /// </summary>
 public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
 {
     private readonly DynamicItemCache _itemCache;
     private readonly SearchResultFactory _searchResultFactory;
+    private readonly DynamicLibraryService _dynamicLibraryService;
     private readonly ILogger<ItemLookupFilter> _logger;
 
     // Action names that look up individual items
@@ -39,10 +41,12 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
     public ItemLookupFilter(
         DynamicItemCache itemCache,
         SearchResultFactory searchResultFactory,
+        DynamicLibraryService dynamicLibraryService,
         ILogger<ItemLookupFilter> logger)
     {
         _itemCache = itemCache;
         _searchResultFactory = searchResultFactory;
+        _dynamicLibraryService = dynamicLibraryService;
         _logger = logger;
     }
 
@@ -82,6 +86,16 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
             return;
         }
 
+        // Verify this is actually a dynamic item by checking for our provider ID
+        // This prevents returning cached items when GUIDs collide with real items
+        if (!SearchResultFactory.IsDynamicItem(cachedItem))
+        {
+            _logger.LogDebug("[DynamicLibrary] Cached item {Id} does not have DynamicLibrary provider ID, passing to Jellyfin",
+                itemId);
+            await next();
+            return;
+        }
+
         _logger.LogDebug("[DynamicLibrary] Returning cached dynamic item: {Name} ({Id})",
             cachedItem.Name, itemId);
 
@@ -89,13 +103,59 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
         if (cachedItem.Type == BaseItemKind.Movie)
         {
             cachedItem = await _searchResultFactory.EnrichMovieDtoAsync(cachedItem, context.HttpContext.RequestAborted);
+            // Trigger Embedarr in background (fire-and-forget) to add to library - if enabled
+            if (DynamicLibraryPlugin.Instance?.Configuration.CreateMediaOnView == true)
+            {
+                _ = TriggerEmbedarrAsync(cachedItem);
+            }
         }
         else if (cachedItem.Type == BaseItemKind.Series)
         {
             cachedItem = await _searchResultFactory.EnrichSeriesDtoAsync(cachedItem, context.HttpContext.RequestAborted);
+            // Trigger Embedarr in background (fire-and-forget) to add to library - if enabled
+            if (DynamicLibraryPlugin.Instance?.Configuration.CreateMediaOnView == true)
+            {
+                _ = TriggerEmbedarrAsync(cachedItem);
+            }
         }
 
         // Return our cached item directly
         context.Result = new OkObjectResult(cachedItem);
+    }
+
+    /// <summary>
+    /// Trigger Embedarr to add the item to the library in the background.
+    /// This ensures the item is available for streaming when user clicks play.
+    /// </summary>
+    private async Task TriggerEmbedarrAsync(BaseItemDto item)
+    {
+        try
+        {
+            // Skip if already added to Embedarr
+            if (_itemCache.IsAddedToEmbedarr(item.Id))
+            {
+                _logger.LogDebug("[DynamicLibrary] Item {Name} already added to Embedarr, skipping", item.Name);
+                return;
+            }
+
+            _logger.LogDebug("[DynamicLibrary] Triggering Embedarr for: {Name} ({Id})", item.Name, item.Id);
+
+            var result = await _dynamicLibraryService.AddToEmbedarrAsync(item);
+
+            if (result?.Success == true)
+            {
+                _itemCache.MarkAddedToEmbedarr(item.Id);
+                _logger.LogDebug("[DynamicLibrary] Successfully added {Name} to Embedarr", item.Name);
+            }
+            else
+            {
+                _logger.LogDebug("[DynamicLibrary] Failed to add {Name} to Embedarr: {Error}",
+                    item.Name, result?.Error ?? "Unknown error");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[DynamicLibrary] Error triggering Embedarr for {Name}", item.Name);
+        }
     }
 }

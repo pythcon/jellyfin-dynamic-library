@@ -66,30 +66,16 @@
               <input is="emby-input" type="password" id="txtEmbedarrApiKey" class="emby-input" />
               <div class="fieldDescription">API key for Embedarr (if required).</div>
             </div>
-          </div>
 
-          <div class="verticalSection">
-            <h3 class="sectionTitle">Library Paths</h3>
-            <p class="fieldDescription">
-              These paths tell Embedarr where to create STRM files. They should match your Jellyfin library folders.
-            </p>
-
-            <div class="inputContainer">
-              <label class="inputLabel inputLabelUnfocused" for="txtMovieLibraryPath">Movie Library Path:</label>
-              <input is="emby-input" type="text" id="txtMovieLibraryPath" class="emby-input" placeholder="/media/movies" />
-              <div class="fieldDescription">Path where movie STRM files should be created.</div>
-            </div>
-
-            <div class="inputContainer">
-              <label class="inputLabel inputLabelUnfocused" for="txtTvLibraryPath">TV Library Path:</label>
-              <input is="emby-input" type="text" id="txtTvLibraryPath" class="emby-input" placeholder="/media/tv" />
-              <div class="fieldDescription">Path where TV show STRM files should be created.</div>
-            </div>
-
-            <div class="inputContainer">
-              <label class="inputLabel inputLabelUnfocused" for="txtAnimeLibraryPath">Anime Library Path:</label>
-              <input is="emby-input" type="text" id="txtAnimeLibraryPath" class="emby-input" placeholder="/media/anime" />
-              <div class="fieldDescription">Path where anime STRM files should be created.</div>
+            <div class="checkboxContainer checkboxContainer-withDescription">
+              <label>
+                <input is="emby-checkbox" type="checkbox" id="chkCreateMediaOnView" />
+                <span>Pre-create media when viewing details</span>
+              </label>
+              <div class="fieldDescription">
+                When enabled, Embedarr will add media to the library when you view item details.
+                When disabled (default), media is only streamed on-demand when you click play.
+              </div>
             </div>
           </div>
 
@@ -117,8 +103,30 @@
               </label>
             </div>
 
-            <div class="selectContainer">
-              <label class="selectLabel" for="selPreferredLanguage">Preferred Language:</label>
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtMaxSearchResults">Max Search Results:</label>
+              <input is="emby-input" type="number" id="txtMaxSearchResults" class="emby-input" min="1" max="100" />
+              <div class="fieldDescription">Maximum number of results to return per API (1-100).</div>
+            </div>
+          </div>
+
+          <div class="verticalSection">
+            <h3 class="sectionTitle">Language Settings</h3>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="selLanguageMode">Language Mode:</label>
+              <select is="emby-select" id="selLanguageMode" class="emby-select">
+                <option value="Default">Default (Original Language)</option>
+                <option value="Override">Override (Force Specific Language)</option>
+              </select>
+              <div class="fieldDescription">
+                Default: Use original titles/descriptions from TVDB/TMDB.<br>
+                Override: Request content in your preferred language (translations may not be available for all content).
+              </div>
+            </div>
+
+            <div class="inputContainer" id="languageOverrideContainer" style="display: none;">
+              <label class="inputLabel inputLabelUnfocused" for="selPreferredLanguage">Preferred Language:</label>
               <select is="emby-select" id="selPreferredLanguage" class="emby-select">
                 <option value="eng">English</option>
                 <option value="jpn">Japanese</option>
@@ -130,25 +138,71 @@
                 <option value="rus">Russian</option>
                 <option value="zho">Chinese</option>
                 <option value="kor">Korean</option>
+                <option value="ara">Arabic</option>
+                <option value="hin">Hindi</option>
+                <option value="tha">Thai</option>
+                <option value="vie">Vietnamese</option>
+                <option value="nld">Dutch</option>
+                <option value="pol">Polish</option>
+                <option value="tur">Turkish</option>
+                <option value="swe">Swedish</option>
+                <option value="nor">Norwegian</option>
+                <option value="dan">Danish</option>
+                <option value="fin">Finnish</option>
+                <option value="ukr">Ukrainian</option>
               </select>
-              <div class="fieldDescription">Language for titles and metadata from TVDB/TMDB (if available).</div>
+              <div class="fieldDescription">
+                Language for titles and metadata. Note: TMDB has better translation support than TVDB.
+                Anime titles from TVDB may still appear in Japanese if no English translation exists.
+              </div>
+            </div>
+          </div>
+
+          <div class="verticalSection">
+            <h3 class="sectionTitle">Provider ID Preferences</h3>
+            <p class="fieldDescription" style="margin-bottom: 1em;">
+              Select which provider ID to use when sending requests to Embedarr for streaming.
+              IMDB is recommended as it has the widest support. If the preferred ID is not available,
+              the plugin will fall back to other available IDs.
+            </p>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="selMoviePreferredId">Movies:</label>
+              <select is="emby-select" id="selMoviePreferredId" class="emby-select">
+                <option value="Imdb">IMDB (Recommended)</option>
+                <option value="Tmdb">TMDB</option>
+              </select>
+              <div class="fieldDescription">
+                Movies are sourced from TMDB. IMDB ID is fetched from movie details. TMDB ID is always available.
+              </div>
             </div>
 
             <div class="inputContainer">
-              <label class="inputLabel inputLabelUnfocused" for="txtMaxSearchResults">Max Search Results:</label>
-              <input is="emby-input" type="number" id="txtMaxSearchResults" class="emby-input" min="1" max="100" />
-              <div class="fieldDescription">Maximum number of results to return per API (1-100).</div>
+              <label class="inputLabel inputLabelUnfocused" for="selTvShowPreferredId">TV Shows:</label>
+              <select is="emby-select" id="selTvShowPreferredId" class="emby-select">
+                <option value="Imdb">IMDB (Recommended)</option>
+                <option value="Tvdb">TVDB</option>
+              </select>
+              <div class="fieldDescription">
+                TV shows are sourced from TVDB. IMDB ID is fetched from remote IDs. TVDB ID is always available.
+              </div>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="selAnimePreferredId">Anime:</label>
+              <select is="emby-select" id="selAnimePreferredId" class="emby-select">
+                <option value="Imdb">IMDB (Recommended)</option>
+                <option value="Tvdb">TVDB</option>
+              </select>
+              <div class="fieldDescription">
+                Anime is sourced from TVDB. IMDB ID is fetched from remote IDs when available.
+                Note: Some anime may not have IMDB IDs; TVDB will be used as fallback.
+              </div>
             </div>
           </div>
 
           <div class="verticalSection">
             <h3 class="sectionTitle">Cache Settings</h3>
-
-            <div class="inputContainer">
-              <label class="inputLabel inputLabelUnfocused" for="txtCachePath">Cache Path:</label>
-              <input is="emby-input" type="text" id="txtCachePath" class="emby-input" placeholder="/tmp/dynamiclibrary" />
-              <div class="fieldDescription">Path for caching API responses (optional, improves performance).</div>
-            </div>
 
             <div class="inputContainer">
               <label class="inputLabel inputLabelUnfocused" for="txtCacheTtlMinutes">Cache TTL (minutes):</label>
@@ -168,51 +222,93 @@
 
     <script type="text/javascript">
       (function () {
-        const pluginId = "A1B2C3D4-E5F6-7890-ABCD-EF1234567890";
+        'use strict';
+
+        const pluginId = 'A1B2C3D4-E5F6-7890-ABCD-EF1234567890';
         const page = document.querySelector('#dynamicLibraryConfigPage');
         const form = document.querySelector('#dynamicLibraryForm');
 
-        // Form elements
+        // Cache DOM elements - inputs
         const chkEnabled = document.querySelector('#chkEnabled');
         const txtTvdbApiKey = document.querySelector('#txtTvdbApiKey');
         const txtTmdbApiKey = document.querySelector('#txtTmdbApiKey');
         const txtEmbedarrUrl = document.querySelector('#txtEmbedarrUrl');
         const txtEmbedarrApiKey = document.querySelector('#txtEmbedarrApiKey');
-        const txtMovieLibraryPath = document.querySelector('#txtMovieLibraryPath');
-        const txtTvLibraryPath = document.querySelector('#txtTvLibraryPath');
-        const txtAnimeLibraryPath = document.querySelector('#txtAnimeLibraryPath');
+        const chkCreateMediaOnView = document.querySelector('#chkCreateMediaOnView');
         const chkSearchMovies = document.querySelector('#chkSearchMovies');
         const chkSearchTvShows = document.querySelector('#chkSearchTvShows');
         const chkSearchAnime = document.querySelector('#chkSearchAnime');
         const txtMaxSearchResults = document.querySelector('#txtMaxSearchResults');
-        const selPreferredLanguage = document.querySelector('#selPreferredLanguage');
-        const txtCachePath = document.querySelector('#txtCachePath');
         const txtCacheTtlMinutes = document.querySelector('#txtCacheTtlMinutes');
 
+        // Cache DOM elements - selects
+        const selLanguageMode = document.querySelector('#selLanguageMode');
+        const selPreferredLanguage = document.querySelector('#selPreferredLanguage');
+        const selMoviePreferredId = document.querySelector('#selMoviePreferredId');
+        const selTvShowPreferredId = document.querySelector('#selTvShowPreferredId');
+        const selAnimePreferredId = document.querySelector('#selAnimePreferredId');
+        const languageOverrideContainer = document.querySelector('#languageOverrideContainer');
+
+        function updateLanguageVisibility() {
+          const mode = selLanguageMode.value;
+          languageOverrideContainer.style.display = mode === 'Override' ? 'block' : 'none';
+        }
+
+        // Helper to set select value - handles custom element timing
+        function setSelectValue(selectEl, value) {
+          // Try setting immediately
+          selectEl.value = value;
+
+          // Also schedule a delayed set in case custom element isn't ready
+          setTimeout(function() {
+            if (selectEl.value !== value) {
+              selectEl.value = value;
+              console.log('Dynamic Library: Delayed set for', selectEl.id, 'to', value);
+            }
+          }, 100);
+        }
+
+        let isLoading = false;
         async function loadConfig() {
+          if (isLoading) return;
+          isLoading = true;
+
           Dashboard.showLoadingMsg();
           try {
-            const cfg = await window.ApiClient.getPluginConfiguration(pluginId);
+            const config = await window.ApiClient.getPluginConfiguration(pluginId);
+            console.log('Dynamic Library: Loaded config', config);
 
-            chkEnabled.checked = cfg.Enabled ?? true;
-            txtTvdbApiKey.value = cfg.TvdbApiKey || '';
-            txtTmdbApiKey.value = cfg.TmdbApiKey || '';
-            txtEmbedarrUrl.value = cfg.EmbedarrUrl || '';
-            txtEmbedarrApiKey.value = cfg.EmbedarrApiKey || '';
-            txtMovieLibraryPath.value = cfg.MovieLibraryPath || '';
-            txtTvLibraryPath.value = cfg.TvLibraryPath || '';
-            txtAnimeLibraryPath.value = cfg.AnimeLibraryPath || '';
-            chkSearchMovies.checked = cfg.SearchMovies ?? true;
-            chkSearchTvShows.checked = cfg.SearchTvShows ?? true;
-            chkSearchAnime.checked = cfg.SearchAnime ?? true;
-            txtMaxSearchResults.value = cfg.MaxSearchResults || 20;
-            selPreferredLanguage.value = cfg.PreferredLanguage || 'eng';
-            txtCachePath.value = cfg.CachePath || '';
-            txtCacheTtlMinutes.value = cfg.CacheTtlMinutes || 60;
-          } catch (e) {
-            console.error('Error loading config:', e);
+            // Checkboxes
+            chkEnabled.checked = config.Enabled ?? true;
+            chkCreateMediaOnView.checked = config.CreateMediaOnView ?? false;
+            chkSearchMovies.checked = config.SearchMovies ?? true;
+            chkSearchTvShows.checked = config.SearchTvShows ?? true;
+            chkSearchAnime.checked = config.SearchAnime ?? true;
+
+            // Text inputs
+            txtTvdbApiKey.value = config.TvdbApiKey || '';
+            txtTmdbApiKey.value = config.TmdbApiKey || '';
+            txtEmbedarrUrl.value = config.EmbedarrUrl || '';
+            txtEmbedarrApiKey.value = config.EmbedarrApiKey || '';
+
+            // Number inputs
+            txtMaxSearchResults.value = config.MaxSearchResults ?? 20;
+            txtCacheTtlMinutes.value = config.CacheTtlMinutes ?? 60;
+
+            // Select dropdowns - use helper to handle custom element timing
+            // Enum values come as strings from C# JSON serialization
+            setSelectValue(selLanguageMode, config.LanguageMode || 'Default');
+            setSelectValue(selPreferredLanguage, config.PreferredLanguage || 'eng');
+            setSelectValue(selMoviePreferredId, config.MoviePreferredId || 'Imdb');
+            setSelectValue(selTvShowPreferredId, config.TvShowPreferredId || 'Imdb');
+            setSelectValue(selAnimePreferredId, config.AnimePreferredId || 'Imdb');
+
+            updateLanguageVisibility();
+          } catch (err) {
+            console.error('Dynamic Library: Failed to load configuration', err);
           } finally {
             Dashboard.hideLoadingMsg();
+            isLoading = false;
           }
         }
 
@@ -220,39 +316,49 @@
           e.preventDefault();
           Dashboard.showLoadingMsg();
           try {
-            const cfg = await window.ApiClient.getPluginConfiguration(pluginId);
+            const config = await window.ApiClient.getPluginConfiguration(pluginId);
 
-            cfg.Enabled = chkEnabled.checked;
-            cfg.TvdbApiKey = txtTvdbApiKey.value.trim();
-            cfg.TmdbApiKey = txtTmdbApiKey.value.trim();
-            cfg.EmbedarrUrl = txtEmbedarrUrl.value.trim();
-            cfg.EmbedarrApiKey = txtEmbedarrApiKey.value.trim();
-            cfg.MovieLibraryPath = txtMovieLibraryPath.value.trim();
-            cfg.TvLibraryPath = txtTvLibraryPath.value.trim();
-            cfg.AnimeLibraryPath = txtAnimeLibraryPath.value.trim();
-            cfg.SearchMovies = chkSearchMovies.checked;
-            cfg.SearchTvShows = chkSearchTvShows.checked;
-            cfg.SearchAnime = chkSearchAnime.checked;
-            cfg.MaxSearchResults = parseInt(txtMaxSearchResults.value) || 20;
-            cfg.PreferredLanguage = selPreferredLanguage.value;
-            cfg.CachePath = txtCachePath.value.trim();
-            cfg.CacheTtlMinutes = parseInt(txtCacheTtlMinutes.value) || 60;
+            // Checkboxes
+            config.Enabled = chkEnabled.checked;
+            config.CreateMediaOnView = chkCreateMediaOnView.checked;
+            config.SearchMovies = chkSearchMovies.checked;
+            config.SearchTvShows = chkSearchTvShows.checked;
+            config.SearchAnime = chkSearchAnime.checked;
 
-            await window.ApiClient.updatePluginConfiguration(pluginId, cfg);
+            // Text inputs
+            config.TvdbApiKey = txtTvdbApiKey.value.trim();
+            config.TmdbApiKey = txtTmdbApiKey.value.trim();
+            config.EmbedarrUrl = txtEmbedarrUrl.value.trim();
+            config.EmbedarrApiKey = txtEmbedarrApiKey.value.trim();
+
+            // Number inputs
+            config.MaxSearchResults = parseInt(txtMaxSearchResults.value, 10) || 20;
+            config.CacheTtlMinutes = parseInt(txtCacheTtlMinutes.value, 10) || 60;
+
+            // Select dropdowns - enum values are serialized as strings
+            config.LanguageMode = selLanguageMode.value;
+            config.PreferredLanguage = selPreferredLanguage.value;
+            config.MoviePreferredId = selMoviePreferredId.value;
+            config.TvShowPreferredId = selTvShowPreferredId.value;
+            config.AnimePreferredId = selAnimePreferredId.value;
+
+            await window.ApiClient.updatePluginConfiguration(pluginId, config);
             Dashboard.processPluginConfigurationUpdateResult();
-          } catch (e) {
-            console.error('Error saving config:', e);
+          } catch (err) {
+            console.error('Dynamic Library: Failed to save configuration', err);
+            Dashboard.alert('Failed to save configuration. Check console for details.');
           } finally {
             Dashboard.hideLoadingMsg();
           }
         }
 
-        function init() {
-          form.addEventListener('submit', saveConfig);
-          loadConfig();
-        }
+        // Set up event listeners once
+        form.addEventListener('submit', saveConfig);
+        selLanguageMode.addEventListener('change', updateLanguageVisibility);
 
-        page.addEventListener('pageshow', init);
+        // Load config when page is shown (works with Jellyfin's SPA navigation)
+        page.addEventListener('viewshow', loadConfig);
+        page.addEventListener('pageshow', loadConfig);
       })();
     </script>
   </div>

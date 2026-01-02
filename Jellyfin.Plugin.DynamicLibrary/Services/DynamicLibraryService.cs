@@ -224,47 +224,174 @@ public class DynamicLibraryService
     }
 
     /// <summary>
-    /// Trigger Embedarr to create STRM files for a dynamic item.
+    /// Trigger Embedarr to add media to library (creates STRM files).
     /// </summary>
-    public async Task<EmbedarrResponse?> CreateStrmFilesAsync(DynamicUri dynamicUri, CancellationToken cancellationToken = default)
+    /// <param name="item">The item DTO with provider IDs</param>
+    public async Task<EmbedarrResponse?> AddToEmbedarrAsync(BaseItemDto item, CancellationToken cancellationToken = default)
     {
         if (!_embedarrClient.IsConfigured)
         {
-            _logger.LogWarning("Embedarr is not configured, cannot create STRM files");
+            _logger.LogWarning("Embedarr is not configured, cannot add to library");
             return new EmbedarrResponse { Success = false, Error = "Embedarr is not configured" };
         }
 
         var config = Config;
 
-        return dynamicUri.Source switch
+        // For movies, use configured preference with fallback
+        if (item.Type == BaseItemKind.Movie)
         {
-            DynamicSource.Tmdb => await _embedarrClient.GenerateMovieAsync(
-                int.Parse(dynamicUri.ExternalId),
-                config.MovieLibraryPath,
-                cancellationToken),
+            var (id, idType) = GetMovieId(item, config.MoviePreferredId);
 
-            DynamicSource.Tvdb => await _embedarrClient.GenerateSeriesAsync(
-                int.Parse(dynamicUri.ExternalId),
-                config.TvLibraryPath,
-                cancellationToken),
+            if (id == null)
+            {
+                return new EmbedarrResponse { Success = false, Error = "No IMDB or TMDB ID found for movie" };
+            }
 
-            _ => new EmbedarrResponse { Success = false, Error = $"Unknown source: {dynamicUri.Source}" }
-        };
+            _logger.LogDebug("[DynamicLibrary] Adding movie to Embedarr: {Name} using {IdType} ID: {Id}", item.Name, idType, id);
+            return await _embedarrClient.AddMovieAsync(id, cancellationToken);
+        }
+
+        // For TV series (including anime), use configured preference with fallback
+        if (item.Type == BaseItemKind.Series)
+        {
+            var isAnime = IsAnime(item);
+            var preference = isAnime ? config.AnimePreferredId : config.TvShowPreferredId;
+            var (id, idType) = GetSeriesId(item, preference);
+
+            if (id == null)
+            {
+                return new EmbedarrResponse { Success = false, Error = "No IMDB or TVDB ID found for series" };
+            }
+
+            _logger.LogDebug("[DynamicLibrary] Adding TV series to Embedarr: {Name} (isAnime={IsAnime}) using {IdType} ID: {Id}",
+                item.Name, isAnime, idType, id);
+            return await _embedarrClient.AddTvSeriesAsync(id, cancellationToken);
+        }
+
+        return new EmbedarrResponse { Success = false, Error = $"Unsupported item type: {item.Type}" };
     }
 
     /// <summary>
-    /// Get the library path for a given media type.
+    /// Get the movie ID based on preference with fallback.
+    /// Movies can have: IMDB, TMDB
     /// </summary>
-    public string? GetLibraryPath(MediaType mediaType)
+    private (object? Id, string IdType) GetMovieId(BaseItemDto item, PreferredProviderId preference)
     {
-        var config = Config;
-        return mediaType switch
+        if (item.ProviderIds == null)
         {
-            MediaType.Movie => config.MovieLibraryPath,
-            MediaType.Series => config.TvLibraryPath,
-            MediaType.Anime => config.AnimeLibraryPath,
-            _ => null
-        };
+            return (null, "none");
+        }
+
+        // Try preferred ID first
+        switch (preference)
+        {
+            case PreferredProviderId.Imdb:
+                if (item.ProviderIds.TryGetValue("Imdb", out var imdbId) && !string.IsNullOrEmpty(imdbId))
+                {
+                    return (imdbId, "IMDB");
+                }
+                // Fallback to TMDB
+                if (item.ProviderIds.TryGetValue("Tmdb", out var tmdbFallback) && int.TryParse(tmdbFallback, out var tmdbInt))
+                {
+                    return (tmdbInt, "TMDB");
+                }
+                break;
+
+            case PreferredProviderId.Tmdb:
+                if (item.ProviderIds.TryGetValue("Tmdb", out var tmdbId) && int.TryParse(tmdbId, out var tmdbIntPref))
+                {
+                    return (tmdbIntPref, "TMDB");
+                }
+                // Fallback to IMDB
+                if (item.ProviderIds.TryGetValue("Imdb", out var imdbFallback) && !string.IsNullOrEmpty(imdbFallback))
+                {
+                    return (imdbFallback, "IMDB");
+                }
+                break;
+        }
+
+        return (null, "none");
+    }
+
+    /// <summary>
+    /// Get the series ID based on preference with fallback.
+    /// TV/Anime can have: IMDB, TVDB
+    /// </summary>
+    private (object? Id, string IdType) GetSeriesId(BaseItemDto item, PreferredProviderId preference)
+    {
+        if (item.ProviderIds == null)
+        {
+            return (null, "none");
+        }
+
+        // Try preferred ID first
+        switch (preference)
+        {
+            case PreferredProviderId.Imdb:
+                if (item.ProviderIds.TryGetValue("Imdb", out var imdbId) && !string.IsNullOrEmpty(imdbId))
+                {
+                    return (imdbId, "IMDB");
+                }
+                // Fallback to TVDB
+                if (item.ProviderIds.TryGetValue("Tvdb", out var tvdbFallback) && int.TryParse(tvdbFallback, out var tvdbInt))
+                {
+                    return (tvdbInt, "TVDB");
+                }
+                break;
+
+            case PreferredProviderId.Tvdb:
+                if (item.ProviderIds.TryGetValue("Tvdb", out var tvdbId) && int.TryParse(tvdbId, out var tvdbIntPref))
+                {
+                    return (tvdbIntPref, "TVDB");
+                }
+                // Fallback to IMDB
+                if (item.ProviderIds.TryGetValue("Imdb", out var imdbFallback) && !string.IsNullOrEmpty(imdbFallback))
+                {
+                    return (imdbFallback, "IMDB");
+                }
+                break;
+        }
+
+        return (null, "none");
+    }
+
+    /// <summary>
+    /// Determine if a series is anime based on genres or other metadata.
+    /// </summary>
+    public static bool IsAnime(BaseItemDto item)
+    {
+        if (item.Genres == null || item.Genres.Length == 0)
+        {
+            return false;
+        }
+
+        // Check for anime-related genres
+        var animeGenres = new[] { "Anime", "Animation" };
+        var hasAnimeGenre = item.Genres.Any(g =>
+            animeGenres.Any(ag => g.Contains(ag, StringComparison.OrdinalIgnoreCase)));
+
+        if (!hasAnimeGenre)
+        {
+            return false;
+        }
+
+        // If it has Animation genre, also check for Japanese origin indicators
+        // Animation alone doesn't mean anime (could be Western animation)
+        if (item.Genres.Any(g => g.Equals("Anime", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true; // Explicit "Anime" genre
+        }
+
+        // For "Animation" genre, check if it's from Japan or has anime-related tags
+        // Check production country if available
+        if (item.ProductionLocations != null &&
+            item.ProductionLocations.Any(c => c.Contains("Japan", StringComparison.OrdinalIgnoreCase) ||
+                                               c.Equals("JP", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -276,11 +403,4 @@ public class DynamicLibraryService
         // For now, individual entries will expire based on TTL
         _logger.LogInformation("Cache clear requested (entries will expire based on TTL)");
     }
-}
-
-public enum MediaType
-{
-    Movie,
-    Series,
-    Anime
 }

@@ -40,31 +40,13 @@ public class TmdbClient : ITmdbClient
         return $"{url}{separator}api_key={apiKey}";
     }
 
-    private string GetLanguageCode()
-    {
-        var preferredLang = DynamicLibraryPlugin.Instance?.Configuration.PreferredLanguage ?? "eng";
-        return ConvertToTwoLetterCode(preferredLang);
-    }
-
     /// <summary>
-    /// Convert 3-letter ISO 639-2 code to 2-letter ISO 639-1 code for TMDB API.
+    /// Get the language code for TMDB API requests.
+    /// Returns null if LanguageMode is Default (will use TMDB's default behavior).
     /// </summary>
-    private static string ConvertToTwoLetterCode(string threeLetterCode)
+    private string? GetLanguageCode()
     {
-        return threeLetterCode.ToLowerInvariant() switch
-        {
-            "eng" => "en",
-            "jpn" => "ja",
-            "spa" => "es",
-            "fra" => "fr",
-            "deu" => "de",
-            "ita" => "it",
-            "por" => "pt",
-            "rus" => "ru",
-            "zho" => "zh",
-            "kor" => "ko",
-            _ => "en" // Default to English
-        };
+        return DynamicLibraryPlugin.Instance?.Configuration.GetTmdbLanguageCode();
     }
 
     public async Task<IReadOnlyList<TmdbMovieResult>> SearchMoviesAsync(string query, CancellationToken cancellationToken = default)
@@ -80,9 +62,10 @@ public class TmdbClient : ITmdbClient
             var client = CreateClient();
             var encodedQuery = Uri.EscapeDataString(query);
             var language = GetLanguageCode();
-            var url = AppendApiKey($"{BaseUrl}/search/movie?query={encodedQuery}&include_adult=false&language={language}");
+            var languageParam = !string.IsNullOrEmpty(language) ? $"&language={language}" : "";
+            var url = AppendApiKey($"{BaseUrl}/search/movie?query={encodedQuery}&include_adult=false{languageParam}");
 
-            _logger.LogDebug("Searching TMDB for: {Query} (language: {Language})", query, language);
+            _logger.LogDebug("Searching TMDB for: {Query} (language: {Language})", query, language ?? "default");
 
             var response = await client.GetAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode)
@@ -116,10 +99,11 @@ public class TmdbClient : ITmdbClient
         {
             var client = CreateClient();
             var language = GetLanguageCode();
+            var languageParam = !string.IsNullOrEmpty(language) ? $"&language={language}" : "";
             // Use append_to_response to get credits in the same request
-            var url = AppendApiKey($"{BaseUrl}/movie/{movieId}?append_to_response=credits&language={language}");
+            var url = AppendApiKey($"{BaseUrl}/movie/{movieId}?append_to_response=credits{languageParam}");
 
-            _logger.LogDebug("Fetching TMDB movie with credits: {MovieId} (language: {Language})", movieId, language);
+            _logger.LogDebug("Fetching TMDB movie with credits: {MovieId} (language: {Language})", movieId, language ?? "default");
 
             var response = await client.GetAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode)

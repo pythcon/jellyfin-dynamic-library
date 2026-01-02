@@ -65,7 +65,7 @@ public class EmbedarrClient : IEmbedarrClient
         }
     }
 
-    public async Task<EmbedarrResponse?> GenerateMovieAsync(int tmdbId, string targetPath, CancellationToken cancellationToken = default)
+    public async Task<EmbedarrResponse?> AddMovieAsync(object id, CancellationToken cancellationToken = default)
     {
         if (!IsConfigured)
         {
@@ -82,21 +82,16 @@ public class EmbedarrClient : IEmbedarrClient
             var client = CreateClient();
             var baseUrl = GetBaseUrl();
 
-            var request = new EmbedarrRequest
-            {
-                MediaType = "movie",
-                TmdbId = tmdbId,
-                TargetPath = targetPath
-            };
+            var request = new EmbedarrAddRequest { Id = id };
 
-            _logger.LogInformation("Requesting Embedarr to generate STRM for movie TMDB:{TmdbId} at {Path}", tmdbId, targetPath);
+            _logger.LogDebug("[DynamicLibrary] Adding movie to Embedarr: {Id}", id);
 
-            var response = await client.PostAsJsonAsync($"{baseUrl}/api/strm/generate", request, cancellationToken);
+            var response = await client.PostAsJsonAsync($"{baseUrl}/api/admin/library/movies", request, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
                 var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-                _logger.LogError("Embedarr request failed: {StatusCode} - {Error}", response.StatusCode, errorContent);
+                _logger.LogError("[DynamicLibrary] Embedarr request failed: {StatusCode} - {Error}", response.StatusCode, errorContent);
                 return new EmbedarrResponse
                 {
                     Success = false,
@@ -105,12 +100,12 @@ public class EmbedarrClient : IEmbedarrClient
             }
 
             var result = await response.Content.ReadFromJsonAsync<EmbedarrResponse>(cancellationToken);
-            _logger.LogInformation("Embedarr generated {Count} files for movie TMDB:{TmdbId}", result?.FilesCreated.Count ?? 0, tmdbId);
+            _logger.LogDebug("[DynamicLibrary] Embedarr added movie {Id}, files created: {Count}", id, result?.FilesCreated.Count ?? 0);
             return result;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error calling Embedarr for movie TMDB:{TmdbId}", tmdbId);
+            _logger.LogError(ex, "[DynamicLibrary] Error calling Embedarr for movie: {Id}", id);
             return new EmbedarrResponse
             {
                 Success = false,
@@ -119,7 +114,7 @@ public class EmbedarrClient : IEmbedarrClient
         }
     }
 
-    public async Task<EmbedarrResponse?> GenerateSeriesAsync(int tvdbId, string targetPath, CancellationToken cancellationToken = default)
+    public async Task<EmbedarrResponse?> AddTvSeriesAsync(object id, CancellationToken cancellationToken = default)
     {
         if (!IsConfigured)
         {
@@ -136,21 +131,16 @@ public class EmbedarrClient : IEmbedarrClient
             var client = CreateClient();
             var baseUrl = GetBaseUrl();
 
-            var request = new EmbedarrRequest
-            {
-                MediaType = "series",
-                TvdbId = tvdbId,
-                TargetPath = targetPath
-            };
+            var request = new EmbedarrAddRequest { Id = id };
 
-            _logger.LogInformation("Requesting Embedarr to generate STRM for series TVDB:{TvdbId} at {Path}", tvdbId, targetPath);
+            _logger.LogDebug("[DynamicLibrary] Adding TV series to Embedarr: {Id}", id);
 
-            var response = await client.PostAsJsonAsync($"{baseUrl}/api/strm/generate", request, cancellationToken);
+            var response = await client.PostAsJsonAsync($"{baseUrl}/api/admin/library/tv", request, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
                 var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-                _logger.LogError("Embedarr request failed: {StatusCode} - {Error}", response.StatusCode, errorContent);
+                _logger.LogError("[DynamicLibrary] Embedarr request failed: {StatusCode} - {Error}", response.StatusCode, errorContent);
                 return new EmbedarrResponse
                 {
                     Success = false,
@@ -159,17 +149,171 @@ public class EmbedarrClient : IEmbedarrClient
             }
 
             var result = await response.Content.ReadFromJsonAsync<EmbedarrResponse>(cancellationToken);
-            _logger.LogInformation("Embedarr generated {Count} files for series TVDB:{TvdbId}", result?.FilesCreated.Count ?? 0, tvdbId);
+            _logger.LogDebug("[DynamicLibrary] Embedarr added TV series {Id}, files created: {Count}", id, result?.FilesCreated.Count ?? 0);
             return result;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error calling Embedarr for series TVDB:{TvdbId}", tvdbId);
+            _logger.LogError(ex, "[DynamicLibrary] Error calling Embedarr for TV series: {Id}", id);
             return new EmbedarrResponse
             {
                 Success = false,
                 Error = ex.Message
             };
+        }
+    }
+
+    public async Task<EmbedarrResponse?> AddAnimeAsync(object id, CancellationToken cancellationToken = default)
+    {
+        if (!IsConfigured)
+        {
+            _logger.LogWarning("Embedarr is not configured");
+            return new EmbedarrResponse
+            {
+                Success = false,
+                Error = "Embedarr is not configured"
+            };
+        }
+
+        try
+        {
+            var client = CreateClient();
+            var baseUrl = GetBaseUrl();
+
+            var request = new EmbedarrAddRequest { Id = id };
+
+            _logger.LogDebug("[DynamicLibrary] Adding anime to Embedarr: {Id}", id);
+
+            var response = await client.PostAsJsonAsync($"{baseUrl}/api/admin/library/anime", request, cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+                _logger.LogError("[DynamicLibrary] Embedarr request failed: {StatusCode} - {Error}", response.StatusCode, errorContent);
+                return new EmbedarrResponse
+                {
+                    Success = false,
+                    Error = $"HTTP {response.StatusCode}: {errorContent}"
+                };
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<EmbedarrResponse>(cancellationToken);
+            _logger.LogDebug("[DynamicLibrary] Embedarr added anime {Id}, files created: {Count}", id, result?.FilesCreated.Count ?? 0);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[DynamicLibrary] Error calling Embedarr for anime: {Id}", id);
+            return new EmbedarrResponse
+            {
+                Success = false,
+                Error = ex.Message
+            };
+        }
+    }
+
+    public async Task<EmbedarrUrlResponse?> GetMovieStreamUrlAsync(string imdbId, CancellationToken cancellationToken = default)
+    {
+        if (!IsConfigured)
+        {
+            _logger.LogWarning("Embedarr is not configured");
+            return null;
+        }
+
+        try
+        {
+            var client = CreateClient();
+            var baseUrl = GetBaseUrl();
+
+            _logger.LogDebug("[DynamicLibrary] Getting stream URL for movie: {ImdbId}", imdbId);
+
+            var response = await client.GetAsync($"{baseUrl}/api/url/movie/{imdbId}", cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+                _logger.LogError("[DynamicLibrary] Embedarr URL request failed: {StatusCode} - {Error}", response.StatusCode, errorContent);
+                return null;
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<EmbedarrUrlResponse>(cancellationToken);
+            _logger.LogDebug("[DynamicLibrary] Got stream URL for movie {ImdbId}: {Url}", imdbId, result?.Url);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[DynamicLibrary] Error getting stream URL for movie: {ImdbId}", imdbId);
+            return null;
+        }
+    }
+
+    public async Task<EmbedarrUrlResponse?> GetTvEpisodeStreamUrlAsync(string imdbId, int season, int episode, CancellationToken cancellationToken = default)
+    {
+        if (!IsConfigured)
+        {
+            _logger.LogWarning("Embedarr is not configured");
+            return null;
+        }
+
+        try
+        {
+            var client = CreateClient();
+            var baseUrl = GetBaseUrl();
+
+            _logger.LogDebug("[DynamicLibrary] Getting stream URL for TV episode: {ImdbId} S{Season}E{Episode}", imdbId, season, episode);
+
+            var response = await client.GetAsync($"{baseUrl}/api/url/tv/{imdbId}/{season}/{episode}", cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+                _logger.LogError("[DynamicLibrary] Embedarr URL request failed: {StatusCode} - {Error}", response.StatusCode, errorContent);
+                return null;
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<EmbedarrUrlResponse>(cancellationToken);
+            _logger.LogDebug("[DynamicLibrary] Got stream URL for TV {ImdbId} S{Season}E{Episode}: {Url}", imdbId, season, episode, result?.Url);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[DynamicLibrary] Error getting stream URL for TV: {ImdbId} S{Season}E{Episode}", imdbId, season, episode);
+            return null;
+        }
+    }
+
+    public async Task<EmbedarrUrlResponse?> GetAnimeStreamUrlAsync(string id, int episode, string audioType = "sub", CancellationToken cancellationToken = default)
+    {
+        if (!IsConfigured)
+        {
+            _logger.LogWarning("Embedarr is not configured");
+            return null;
+        }
+
+        try
+        {
+            var client = CreateClient();
+            var baseUrl = GetBaseUrl();
+
+            _logger.LogDebug("[DynamicLibrary] Getting stream URL for anime: {Id} E{Episode} ({AudioType})", id, episode, audioType);
+
+            var response = await client.GetAsync($"{baseUrl}/api/url/anime/{id}/{episode}/{audioType}", cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+                _logger.LogError("[DynamicLibrary] Embedarr URL request failed: {StatusCode} - {Error}", response.StatusCode, errorContent);
+                return null;
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<EmbedarrUrlResponse>(cancellationToken);
+            _logger.LogDebug("[DynamicLibrary] Got stream URL for anime {Id} E{Episode}: {Url}", id, episode, result?.Url);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[DynamicLibrary] Error getting stream URL for anime: {Id} E{Episode}", id, episode);
+            return null;
         }
     }
 }

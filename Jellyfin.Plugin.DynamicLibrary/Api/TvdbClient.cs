@@ -85,6 +85,15 @@ public class TvdbClient : ITvdbClient
         }
     }
 
+    /// <summary>
+    /// Get the language code for TVDB API requests.
+    /// Returns null if LanguageMode is Default (will use TVDB's default behavior).
+    /// </summary>
+    private string? GetLanguageCode()
+    {
+        return DynamicLibraryPlugin.Instance?.Configuration.GetTvdbLanguageCode();
+    }
+
     private async Task<HttpClient> CreateAuthenticatedClientAsync(CancellationToken cancellationToken)
     {
         var token = await GetAuthTokenAsync(cancellationToken);
@@ -111,8 +120,9 @@ public class TvdbClient : ITvdbClient
             var client = await CreateAuthenticatedClientAsync(cancellationToken);
             var encodedQuery = Uri.EscapeDataString(query);
             var url = $"{BaseUrl}/search?query={encodedQuery}&type=series";
+            var language = GetLanguageCode();
 
-            _logger.LogDebug("Searching TVDB for: {Query}", query);
+            _logger.LogDebug("Searching TVDB for: {Query} (language: {Language})", query, language ?? "default");
 
             var response = await client.GetAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode)
@@ -145,9 +155,11 @@ public class TvdbClient : ITvdbClient
         try
         {
             var client = await CreateAuthenticatedClientAsync(cancellationToken);
-            var url = $"{BaseUrl}/series/{seriesId}/extended?meta=episodes";
+            // Request both episodes and translations metadata
+            var url = $"{BaseUrl}/series/{seriesId}/extended?meta=episodes&meta=translations";
+            var language = GetLanguageCode();
 
-            _logger.LogDebug("Fetching TVDB series: {SeriesId}", seriesId);
+            _logger.LogDebug("Fetching TVDB series: {SeriesId} (language: {Language})", seriesId, language ?? "default");
 
             var response = await client.GetAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode)
@@ -162,6 +174,74 @@ public class TvdbClient : ITvdbClient
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error fetching TVDB series: {SeriesId}", seriesId);
+            return null;
+        }
+    }
+
+    public async Task<TvdbTranslationData?> GetSeriesTranslationAsync(int seriesId, string language, CancellationToken cancellationToken = default)
+    {
+        if (!IsConfigured)
+        {
+            _logger.LogDebug("TVDB client not configured, skipping translation lookup");
+            return null;
+        }
+
+        try
+        {
+            var client = await CreateAuthenticatedClientAsync(cancellationToken);
+            var url = $"{BaseUrl}/series/{seriesId}/translations/{language}";
+
+            _logger.LogDebug("Fetching TVDB translation: SeriesId={SeriesId}, Language={Language}", seriesId, language);
+
+            var response = await client.GetAsync(url, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("TVDB translation lookup failed: {StatusCode}", response.StatusCode);
+                return null;
+            }
+
+            var translationResponse = await response.Content.ReadFromJsonAsync<TvdbTranslationResponse>(cancellationToken);
+            return translationResponse?.Data;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching TVDB translation: SeriesId={SeriesId}, Language={Language}", seriesId, language);
+            return null;
+        }
+    }
+
+    public async Task<TvdbTranslationData?> GetEpisodeTranslationAsync(int episodeId, string language, CancellationToken cancellationToken = default)
+    {
+        if (!IsConfigured)
+        {
+            _logger.LogDebug("TVDB client not configured, skipping episode translation lookup");
+            return null;
+        }
+
+        try
+        {
+            var client = await CreateAuthenticatedClientAsync(cancellationToken);
+            var url = $"{BaseUrl}/episodes/{episodeId}/translations/{language}";
+
+            _logger.LogDebug("Fetching TVDB episode translation: EpisodeId={EpisodeId}, Language={Language}", episodeId, language);
+
+            var response = await client.GetAsync(url, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                // 404 is common for episodes without translations, don't log as warning
+                if (response.StatusCode != System.Net.HttpStatusCode.NotFound)
+                {
+                    _logger.LogWarning("TVDB episode translation lookup failed: {StatusCode}", response.StatusCode);
+                }
+                return null;
+            }
+
+            var translationResponse = await response.Content.ReadFromJsonAsync<TvdbTranslationResponse>(cancellationToken);
+            return translationResponse?.Data;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching TVDB episode translation: EpisodeId={EpisodeId}, Language={Language}", episodeId, language);
             return null;
         }
     }

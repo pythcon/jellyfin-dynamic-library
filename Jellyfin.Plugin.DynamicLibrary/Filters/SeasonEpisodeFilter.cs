@@ -58,6 +58,13 @@ public class SeasonEpisodeFilter : IAsyncActionFilter, IOrderedFilter
                 await HandleGetEpisodes(context, next);
                 return;
             }
+
+            // Handle GetNextUp - intercept for dynamic series to prevent random episodes showing
+            if (actionName == "GetNextUp")
+            {
+                await HandleGetNextUp(context, next);
+                return;
+            }
         }
 
         // Handle Items controller - Android TV uses this endpoint with parentId
@@ -80,7 +87,8 @@ public class SeasonEpisodeFilter : IAsyncActionFilter, IOrderedFilter
         }
 
         // Check if this is a dynamic series
-        if (!_itemCache.HasItem(seriesId))
+        var seriesItem = _itemCache.GetItem(seriesId);
+        if (seriesItem == null || !SearchResultFactory.IsDynamicItem(seriesItem))
         {
             await next();
             return;
@@ -120,7 +128,8 @@ public class SeasonEpisodeFilter : IAsyncActionFilter, IOrderedFilter
         }
 
         // Check if this is a dynamic series
-        if (!_itemCache.HasItem(seriesId))
+        var seriesItem = _itemCache.GetItem(seriesId);
+        if (seriesItem == null || !SearchResultFactory.IsDynamicItem(seriesItem))
         {
             await next();
             return;
@@ -169,6 +178,29 @@ public class SeasonEpisodeFilter : IAsyncActionFilter, IOrderedFilter
             return;
         }
 
+        // Handle startItemId - Android TV uses this to indicate which episode to start from
+        // The client expects the list to start from this item
+        if (context.ActionArguments.TryGetValue("startItemId", out var startItemIdObj) && startItemIdObj is Guid startItemId)
+        {
+            var startIndex = episodes.FindIndex(e => e.Id == startItemId);
+            if (startIndex > 0)
+            {
+                _logger.LogDebug("[DynamicLibrary] Reordering episodes to start from {StartItemId} (index {Index})",
+                    startItemId, startIndex);
+                // Reorder: put the requested episode first, then the rest
+                var reordered = new List<BaseItemDto>();
+                reordered.AddRange(episodes.Skip(startIndex));
+                reordered.AddRange(episodes.Take(startIndex));
+                episodes = reordered;
+            }
+        }
+
+        // Handle limit parameter
+        if (context.ActionArguments.TryGetValue("limit", out var limitObj) && limitObj is int limit && limit > 0)
+        {
+            episodes = episodes.Take(limit).ToList();
+        }
+
         _logger.LogDebug("[DynamicLibrary] Returning {Count} cached episodes for dynamic series {Id} (season: {Season})",
             episodes.Count, seriesId, seasonNumber?.ToString() ?? "all");
 
@@ -176,6 +208,52 @@ public class SeasonEpisodeFilter : IAsyncActionFilter, IOrderedFilter
         {
             Items = episodes.ToArray(),
             TotalRecordCount = episodes.Count
+        });
+    }
+
+    private async Task HandleGetNextUp(ActionExecutingContext context, ActionExecutionDelegate next)
+    {
+        // Check if seriesId is provided - this means we're getting next up for a specific series
+        if (!context.ActionArguments.TryGetValue("seriesId", out var seriesIdObj) || seriesIdObj is not Guid seriesId)
+        {
+            // No seriesId means global Next Up - let Jellyfin handle it
+            await next();
+            return;
+        }
+
+        // Check if this is a dynamic series
+        var seriesItem = _itemCache.GetItem(seriesId);
+        if (seriesItem == null || !SearchResultFactory.IsDynamicItem(seriesItem))
+        {
+            // Not a dynamic series, let Jellyfin handle it
+            await next();
+            return;
+        }
+
+        _logger.LogDebug("[DynamicLibrary] HandleGetNextUp: Intercepting for dynamic series {Id}", seriesId);
+
+        // For dynamic series, return the first episode of season 1 as "next up"
+        // (since user hasn't watched any episodes yet)
+        var episodes = _itemCache.GetEpisodesForSeason(seriesId, 1);
+        if (episodes != null && episodes.Count > 0)
+        {
+            var firstEpisode = episodes.OrderBy(e => e.IndexNumber ?? 0).First();
+            _logger.LogDebug("[DynamicLibrary] HandleGetNextUp: Returning first episode {Name} for dynamic series", firstEpisode.Name);
+
+            context.Result = new OkObjectResult(new QueryResult<BaseItemDto>
+            {
+                Items = new[] { firstEpisode },
+                TotalRecordCount = 1
+            });
+            return;
+        }
+
+        // No episodes available, return empty result
+        _logger.LogDebug("[DynamicLibrary] HandleGetNextUp: No episodes found for dynamic series {Id}", seriesId);
+        context.Result = new OkObjectResult(new QueryResult<BaseItemDto>
+        {
+            Items = Array.Empty<BaseItemDto>(),
+            TotalRecordCount = 0
         });
     }
 
@@ -195,7 +273,7 @@ public class SeasonEpisodeFilter : IAsyncActionFilter, IOrderedFilter
 
         // Check if parent is a dynamic item
         var parentItem = _itemCache.GetItem(parentId);
-        if (parentItem == null)
+        if (parentItem == null || !SearchResultFactory.IsDynamicItem(parentItem))
         {
             await next();
             return;

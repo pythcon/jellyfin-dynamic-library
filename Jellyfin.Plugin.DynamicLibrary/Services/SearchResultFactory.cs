@@ -21,6 +21,7 @@ public class SearchResultFactory
     private readonly ILogger<SearchResultFactory> _logger;
 
     private const string DynamicLibraryProviderId = "DynamicLibrary";
+    private const string TvdbArtworkBaseUrl = "https://artworks.thetvdb.com";
 
     public SearchResultFactory(
         ITmdbClient tmdbClient,
@@ -228,8 +229,46 @@ public class SearchResultFactory
             return dto;
         }
 
-        // Update overview if we have a better one from extended data
-        if (!string.IsNullOrEmpty(details.Overview))
+        // Get language settings
+        var config = DynamicLibraryPlugin.Instance?.Configuration;
+        var languageCode = config?.GetTvdbLanguageCode();
+
+        _logger.LogInformation("[DynamicLibrary] EnrichSeriesDto: {Name}, LanguageCode={Lang}", details.Name, languageCode ?? "null");
+        _logger.LogInformation("[DynamicLibrary] EnrichSeriesDto: AvailableTranslations={Langs}",
+            details.NameTranslations != null ? string.Join(",", details.NameTranslations) : "none");
+
+        // Fetch translation if language override is enabled and translation is available
+        string? localizedName = null;
+        string? localizedOverview = null;
+
+        if (!string.IsNullOrEmpty(languageCode) && details.HasTranslation(languageCode))
+        {
+            var translation = await _tvdbClient.GetSeriesTranslationAsync(details.Id, languageCode, cancellationToken);
+            if (translation != null)
+            {
+                _logger.LogInformation("[DynamicLibrary] EnrichSeriesDto: Got translation - Name={Name}", translation.Name);
+                localizedName = translation.Name;
+                localizedOverview = translation.Overview;
+            }
+        }
+
+        // Update name with localized version if available
+        if (!string.IsNullOrEmpty(localizedName))
+        {
+            dto.Name = localizedName;
+            // Store original name if different
+            if (localizedName != details.Name)
+            {
+                dto.OriginalTitle = details.Name;
+            }
+        }
+
+        // Update overview with localized version if available
+        if (!string.IsNullOrEmpty(localizedOverview))
+        {
+            dto.Overview = localizedOverview;
+        }
+        else if (!string.IsNullOrEmpty(details.Overview))
         {
             dto.Overview = details.Overview;
         }
@@ -285,8 +324,8 @@ public class SearchResultFactory
             dto.ChildCount = regularSeasons.Count;
         }
 
-        // Create seasons and episodes
-        CreateSeasonsAndEpisodes(details, dto.Id, dto.Name ?? "Unknown Series");
+        // Create seasons and episodes (with translations if language override enabled)
+        await CreateSeasonsAndEpisodesAsync(details, dto.Id, dto.Name ?? "Unknown Series", languageCode, cancellationToken);
 
         // Update cache with enriched data
         _itemCache.StoreItem(dto, _itemCache.GetImageUrl(dto.Id));
@@ -300,14 +339,28 @@ public class SearchResultFactory
     public BaseItemDto CreateSeriesDto(TvdbSearchResult series)
     {
         var dynamicUri = DynamicUri.FromTvdb(series.TvdbIdInt);
-        var preferredLang = DynamicLibraryPlugin.Instance?.Configuration.PreferredLanguage ?? "eng";
+        var config = DynamicLibraryPlugin.Instance?.Configuration;
+        var languageCode = config?.GetTvdbLanguageCode(); // Returns language code if Override mode, null otherwise
+
+        _logger.LogInformation("[DynamicLibrary] CreateSeriesDto: Name={Name}, LanguageMode={Mode}, PreferredLang={PrefLang}, EffectiveLangCode={Lang}",
+            series.Name, config?.LanguageMode, config?.PreferredLanguage, languageCode ?? "null");
+        _logger.LogInformation("[DynamicLibrary] CreateSeriesDto: HasTranslations={HasTrans}, TranslationKeys={Keys}",
+            series.Translations?.Count ?? 0, series.Translations != null ? string.Join(",", series.Translations.Keys) : "none");
+
+        // Get localized name and overview using the configured language
+        var displayName = series.GetLocalizedName(languageCode);
+        var displayOverview = series.GetLocalizedOverview(languageCode);
+
+        _logger.LogInformation("[DynamicLibrary] CreateSeriesDto result: DisplayName={DisplayName}, OriginalName={OriginalName}",
+            displayName, series.Name);
 
         var dto = new BaseItemDto
         {
             Id = dynamicUri.ToGuid(),
             ServerId = _serverApplicationHost.SystemId,
-            Name = series.Name,
-            Overview = series.GetLocalizedOverview(preferredLang),
+            Name = displayName,
+            OriginalTitle = displayName != series.Name ? series.Name : null,
+            Overview = displayOverview,
             Type = BaseItemKind.Series,
             IsFolder = true,
             ProviderIds = new Dictionary<string, string>
@@ -383,11 +436,14 @@ public class SearchResultFactory
 
     /// <summary>
     /// Generate a stable GUID from a string key.
+    /// Uses a unique prefix to avoid collisions with real Jellyfin items.
     /// </summary>
     private static Guid GenerateGuid(string key)
     {
+        // Add unique prefix to avoid GUID collisions with real Jellyfin items
+        const string UniquePrefix = "jellyfin-dynamiclibrary-plugin:";
         using var md5 = MD5.Create();
-        var hash = md5.ComputeHash(Encoding.UTF8.GetBytes(key));
+        var hash = md5.ComputeHash(Encoding.UTF8.GetBytes(UniquePrefix + key));
         return new Guid(hash);
     }
 
@@ -433,7 +489,9 @@ public class SearchResultFactory
                 { ImageType.Primary, "dynamic" }
             };
             dto.PrimaryImageAspectRatio = 0.667;
-            _itemCache.StoreItem(dto, season.Image);
+            // Ensure full URL for TVDB images
+            var imageUrl = GetFullTvdbImageUrl(season.Image);
+            _itemCache.StoreItem(dto, imageUrl);
         }
         else
         {
@@ -446,16 +504,25 @@ public class SearchResultFactory
     /// <summary>
     /// Create an Episode DTO from TVDB episode data.
     /// </summary>
-    public BaseItemDto CreateEpisodeDto(TvdbEpisode episode, Guid seriesId, string seriesName, Guid seasonId)
+    public BaseItemDto CreateEpisodeDto(TvdbEpisode episode, Guid seriesId, string seriesName, Guid seasonId, TvdbTranslationData? translation = null)
     {
         var episodeId = GenerateGuid($"tvdb:episode:{episode.Id}");
+
+        // Use translated name/overview if available, otherwise fall back to original
+        var displayName = !string.IsNullOrEmpty(translation?.Name)
+            ? translation.Name
+            : episode.Name ?? $"Episode {episode.Number}";
+
+        var displayOverview = !string.IsNullOrEmpty(translation?.Overview)
+            ? translation.Overview
+            : episode.Overview;
 
         var dto = new BaseItemDto
         {
             Id = episodeId,
             ServerId = _serverApplicationHost.SystemId,
-            Name = episode.Name ?? $"Episode {episode.Number}",
-            Overview = episode.Overview,
+            Name = displayName,
+            Overview = displayOverview,
             Type = BaseItemKind.Episode,
             MediaType = Jellyfin.Data.Enums.MediaType.Video,
             IsFolder = false,
@@ -501,7 +568,9 @@ public class SearchResultFactory
                 { ImageType.Primary, "dynamic" }
             };
             dto.PrimaryImageAspectRatio = 1.78; // 16:9 for episode thumbnails
-            _itemCache.StoreItem(dto, episode.Image);
+            // Ensure full URL for TVDB images
+            var imageUrl = GetFullTvdbImageUrl(episode.Image);
+            _itemCache.StoreItem(dto, imageUrl);
         }
         else
         {
@@ -512,9 +581,36 @@ public class SearchResultFactory
     }
 
     /// <summary>
-    /// Create all season and episode DTOs for a series from TVDB extended data.
+    /// Convert a potentially relative TVDB image path to a full URL.
     /// </summary>
-    public void CreateSeasonsAndEpisodes(TvdbSeriesExtended details, Guid seriesId, string seriesName)
+    private static string GetFullTvdbImageUrl(string imagePath)
+    {
+        if (string.IsNullOrEmpty(imagePath))
+        {
+            return imagePath;
+        }
+
+        // If it's already a full URL, return as-is
+        if (imagePath.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            imagePath.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            return imagePath;
+        }
+
+        // Prepend the TVDB artwork base URL
+        return $"{TvdbArtworkBaseUrl}{imagePath}";
+    }
+
+    /// <summary>
+    /// Create all season and episode DTOs for a series from TVDB extended data.
+    /// Fetches episode translations if language override is enabled.
+    /// </summary>
+    public async Task CreateSeasonsAndEpisodesAsync(
+        TvdbSeriesExtended details,
+        Guid seriesId,
+        string seriesName,
+        string? languageCode,
+        CancellationToken cancellationToken = default)
     {
         if (details.Seasons == null || details.Seasons.Count == 0)
         {
@@ -523,14 +619,17 @@ public class SearchResultFactory
 
         // Filter to only "official" (aired order) seasons - TVDB returns multiple season types
         // Type "official" is the standard aired order
+        // Also exclude Season 0 (Specials) as they are not supported
         var officialSeasons = details.Seasons
             .Where(s => s.Type?.Type?.Equals("official", StringComparison.OrdinalIgnoreCase) == true)
+            .Where(s => s.Number > 0) // Exclude specials (Season 0)
             .ToList();
 
         // If no official seasons found, fall back to all seasons but dedupe by season number
         if (officialSeasons.Count == 0)
         {
             officialSeasons = details.Seasons
+                .Where(s => s.Number > 0) // Exclude specials (Season 0)
                 .GroupBy(s => s.Number)
                 .Select(g => g.First())
                 .ToList();
@@ -547,10 +646,12 @@ public class SearchResultFactory
             seasonIdMap[season.Number] = seasonDto.Id;
         }
 
-        // Update episode counts for each season
+        // Update episode counts for each season (excluding Season 0)
         if (details.Episodes != null)
         {
-            var episodesBySeason = details.Episodes.GroupBy(e => e.SeasonNumber);
+            var episodesBySeason = details.Episodes
+                .Where(e => e.SeasonNumber > 0) // Exclude specials
+                .GroupBy(e => e.SeasonNumber);
             foreach (var group in episodesBySeason)
             {
                 var seasonDto = seasonDtos.FirstOrDefault(s => s.IndexNumber == group.Key);
@@ -563,12 +664,44 @@ public class SearchResultFactory
 
         _itemCache.StoreSeasonsForSeries(seriesId, seasonDtos);
 
-        // Create episode DTOs
+        // Create episode DTOs (excluding Season 0 specials)
         if (details.Episodes != null && details.Episodes.Count > 0)
         {
+            var episodes = details.Episodes
+                .Where(e => e.SeasonNumber > 0) // Exclude specials (Season 0)
+                .OrderBy(e => e.SeasonNumber)
+                .ThenBy(e => e.Number)
+                .ToList();
+
+            // Fetch episode translations in parallel if language override is enabled
+            var episodeTranslations = new Dictionary<int, TvdbTranslationData>();
+            if (!string.IsNullOrEmpty(languageCode))
+            {
+                _logger.LogDebug("[DynamicLibrary] Fetching translations for {Count} episodes in language {Lang}",
+                    episodes.Count, languageCode);
+
+                var translationTasks = episodes.Select(async ep =>
+                {
+                    var translation = await _tvdbClient.GetEpisodeTranslationAsync(ep.Id, languageCode, cancellationToken);
+                    return (ep.Id, translation);
+                });
+
+                var results = await Task.WhenAll(translationTasks);
+                foreach (var (episodeId, translation) in results)
+                {
+                    if (translation != null)
+                    {
+                        episodeTranslations[episodeId] = translation;
+                    }
+                }
+
+                _logger.LogDebug("[DynamicLibrary] Got translations for {Count}/{Total} episodes",
+                    episodeTranslations.Count, episodes.Count);
+            }
+
             var episodeDtos = new List<BaseItemDto>();
 
-            foreach (var episode in details.Episodes.OrderBy(e => e.SeasonNumber).ThenBy(e => e.Number))
+            foreach (var episode in episodes)
             {
                 // Get the season ID for this episode
                 if (!seasonIdMap.TryGetValue(episode.SeasonNumber, out var seasonId))
@@ -577,7 +710,10 @@ public class SearchResultFactory
                     seasonId = GenerateGuid($"tvdb:season:{details.Id}:{episode.SeasonNumber}");
                 }
 
-                var episodeDto = CreateEpisodeDto(episode, seriesId, seriesName, seasonId);
+                // Get translation if available
+                episodeTranslations.TryGetValue(episode.Id, out var translation);
+
+                var episodeDto = CreateEpisodeDto(episode, seriesId, seriesName, seasonId, translation);
                 episodeDtos.Add(episodeDto);
             }
 

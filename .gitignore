@@ -1,3 +1,41 @@
+# Build output
+bin/
+obj/
+out/
+
+# .NET
+*.dll
+*.pdb
+*.exe
+*.cache
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+*.nuget.props
+*.nuget.targets
+
+# VS Code
+.vscode/
+
+# Visual Studio
+.vs/
+*.csproj.user
+
+# JetBrains Rider
+.idea/
+*.sln.iml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Project specific
 CLAUDE.md
 jellyfin-test/
 install-plugin.sh

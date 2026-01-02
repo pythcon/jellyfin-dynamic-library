@@ -20,6 +20,7 @@ public class DynamicItemCache
     private const string ImagePrefix = "dynamic_image:";
     private const string SeasonsPrefix = "dynamic_seasons:";
     private const string EpisodesPrefix = "dynamic_episodes:";
+    private const string EmbedarrAddedPrefix = "embedarr_added:";
 
     public DynamicItemCache(IMemoryCache cache, ILogger<DynamicItemCache> logger)
     {
@@ -139,5 +140,24 @@ public class DynamicItemCache
     {
         var episodes = GetEpisodesForSeries(seriesId);
         return episodes?.Where(e => e.ParentIndexNumber == seasonNumber).ToList();
+    }
+
+    /// <summary>
+    /// Mark an item as having been added to Embedarr.
+    /// </summary>
+    public void MarkAddedToEmbedarr(Guid itemId)
+    {
+        var key = $"{EmbedarrAddedPrefix}{itemId}";
+        _cache.Set(key, true, TimeSpan.FromHours(24)); // Longer duration since files persist
+        _logger.LogDebug("[DynamicItemCache] Marked item {ItemId} as added to Embedarr", itemId);
+    }
+
+    /// <summary>
+    /// Check if an item has been added to Embedarr.
+    /// </summary>
+    public bool IsAddedToEmbedarr(Guid itemId)
+    {
+        var key = $"{EmbedarrAddedPrefix}{itemId}";
+        return _cache.TryGetValue<bool>(key, out var added) && added;
     }
 }
