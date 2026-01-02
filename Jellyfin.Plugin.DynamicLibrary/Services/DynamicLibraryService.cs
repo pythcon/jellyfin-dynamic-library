@@ -77,7 +77,8 @@ public class DynamicLibraryService
             return new List<BaseItemDto>();
         }
 
-        var cacheKey = $"search:{query}:{string.Join(",", requestedTypes.Order())}";
+        // Use case-insensitive cache key
+        var cacheKey = $"search:{query.ToLowerInvariant()}:{string.Join(",", requestedTypes.Order())}";
 
         // Check cache first
         if (_cache.TryGetValue<List<BaseItemDto>>(cacheKey, out var cachedResults) && cachedResults != null)

@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using Jellyfin.Plugin.DynamicLibrary.Models;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.DynamicLibrary.Api;
@@ -9,17 +10,28 @@ public class TvdbClient : ITvdbClient
 {
     private const string BaseUrl = "https://api4.thetvdb.com/v4";
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IMemoryCache _cache;
     private readonly ILogger<TvdbClient> _logger;
 
     private string? _authToken;
     private DateTime _tokenExpiry = DateTime.MinValue;
     private readonly SemaphoreSlim _authLock = new(1, 1);
 
-    public TvdbClient(IHttpClientFactory httpClientFactory, ILogger<TvdbClient> logger)
+    // Cache key prefixes
+    private const string SearchCachePrefix = "tvdb:search:";
+    private const string SeriesCachePrefix = "tvdb:series:";
+    private const string TranslationCachePrefix = "tvdb:translation:";
+    private const string EpisodeTranslationCachePrefix = "tvdb:episode:translation:";
+
+    public TvdbClient(IHttpClientFactory httpClientFactory, IMemoryCache cache, ILogger<TvdbClient> logger)
     {
         _httpClientFactory = httpClientFactory;
+        _cache = cache;
         _logger = logger;
     }
+
+    private TimeSpan CacheDuration => TimeSpan.FromMinutes(
+        DynamicLibraryPlugin.Instance?.Configuration.CacheTtlMinutes ?? 60);
 
     public bool IsConfigured => !string.IsNullOrEmpty(GetApiKey());
 
@@ -115,6 +127,14 @@ public class TvdbClient : ITvdbClient
             return Array.Empty<TvdbSearchResult>();
         }
 
+        // Check cache first (case-insensitive)
+        var cacheKey = $"{SearchCachePrefix}{query.ToLowerInvariant()}";
+        if (_cache.TryGetValue<IReadOnlyList<TvdbSearchResult>>(cacheKey, out var cachedResults) && cachedResults != null)
+        {
+            _logger.LogDebug("TVDB search cache hit for: {Query} ({Count} results)", query, cachedResults.Count);
+            return cachedResults;
+        }
+
         try
         {
             var client = await CreateAuthenticatedClientAsync(cancellationToken);
@@ -134,7 +154,10 @@ public class TvdbClient : ITvdbClient
             var searchResponse = await response.Content.ReadFromJsonAsync<TvdbSearchResponse>(cancellationToken);
             var results = searchResponse?.Data ?? new List<TvdbSearchResult>();
 
-            _logger.LogDebug("TVDB search returned {Count} results", results.Count);
+            // Cache the results
+            _cache.Set(cacheKey, (IReadOnlyList<TvdbSearchResult>)results, CacheDuration);
+            _logger.LogDebug("TVDB search returned {Count} results (cached)", results.Count);
+
             return results;
         }
         catch (Exception ex)
@@ -150,6 +173,14 @@ public class TvdbClient : ITvdbClient
         {
             _logger.LogDebug("TVDB client not configured, skipping series lookup");
             return null;
+        }
+
+        // Check cache first
+        var cacheKey = $"{SeriesCachePrefix}{seriesId}";
+        if (_cache.TryGetValue<TvdbSeriesExtended>(cacheKey, out var cachedSeries) && cachedSeries != null)
+        {
+            _logger.LogDebug("TVDB series cache hit for: {SeriesId}", seriesId);
+            return cachedSeries;
         }
 
         try
@@ -169,7 +200,16 @@ public class TvdbClient : ITvdbClient
             }
 
             var seriesResponse = await response.Content.ReadFromJsonAsync<TvdbSeriesResponse>(cancellationToken);
-            return seriesResponse?.Data;
+            var series = seriesResponse?.Data;
+
+            // Cache the result
+            if (series != null)
+            {
+                _cache.Set(cacheKey, series, CacheDuration);
+                _logger.LogDebug("TVDB series cached: {SeriesId}", seriesId);
+            }
+
+            return series;
         }
         catch (Exception ex)
         {
@@ -184,6 +224,14 @@ public class TvdbClient : ITvdbClient
         {
             _logger.LogDebug("TVDB client not configured, skipping translation lookup");
             return null;
+        }
+
+        // Check cache first
+        var cacheKey = $"{TranslationCachePrefix}{seriesId}:{language}";
+        if (_cache.TryGetValue<TvdbTranslationData>(cacheKey, out var cachedTranslation) && cachedTranslation != null)
+        {
+            _logger.LogDebug("TVDB series translation cache hit: SeriesId={SeriesId}, Language={Language}", seriesId, language);
+            return cachedTranslation;
         }
 
         try
@@ -201,7 +249,15 @@ public class TvdbClient : ITvdbClient
             }
 
             var translationResponse = await response.Content.ReadFromJsonAsync<TvdbTranslationResponse>(cancellationToken);
-            return translationResponse?.Data;
+            var translation = translationResponse?.Data;
+
+            // Cache the result
+            if (translation != null)
+            {
+                _cache.Set(cacheKey, translation, CacheDuration);
+            }
+
+            return translation;
         }
         catch (Exception ex)
         {
@@ -218,16 +274,25 @@ public class TvdbClient : ITvdbClient
             return null;
         }
 
+        // Check cache first - this is critical as we may fetch 100+ episode translations
+        var cacheKey = $"{EpisodeTranslationCachePrefix}{episodeId}:{language}";
+        if (_cache.TryGetValue<TvdbTranslationData?>(cacheKey, out var cachedTranslation))
+        {
+            // Note: cachedTranslation may be null (cached negative result)
+            return cachedTranslation;
+        }
+
         try
         {
             var client = await CreateAuthenticatedClientAsync(cancellationToken);
             var url = $"{BaseUrl}/episodes/{episodeId}/translations/{language}";
 
-            _logger.LogDebug("Fetching TVDB episode translation: EpisodeId={EpisodeId}, Language={Language}", episodeId, language);
-
             var response = await client.GetAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
+                // Cache the negative result to avoid repeated API calls for missing translations
+                _cache.Set(cacheKey, (TvdbTranslationData?)null, CacheDuration);
+
                 // 404 is common for episodes without translations, don't log as warning
                 if (response.StatusCode != System.Net.HttpStatusCode.NotFound)
                 {
@@ -237,7 +302,12 @@ public class TvdbClient : ITvdbClient
             }
 
             var translationResponse = await response.Content.ReadFromJsonAsync<TvdbTranslationResponse>(cancellationToken);
-            return translationResponse?.Data;
+            var translation = translationResponse?.Data;
+
+            // Cache the result (including null)
+            _cache.Set(cacheKey, translation, CacheDuration);
+
+            return translation;
         }
         catch (Exception ex)
         {

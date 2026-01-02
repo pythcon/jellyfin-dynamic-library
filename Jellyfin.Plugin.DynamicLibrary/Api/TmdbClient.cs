@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using Jellyfin.Plugin.DynamicLibrary.Models;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.DynamicLibrary.Api;
@@ -10,16 +11,25 @@ public class TmdbClient : ITmdbClient
     private const string DefaultImageBaseUrl = "https://image.tmdb.org/t/p/";
 
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IMemoryCache _cache;
     private readonly ILogger<TmdbClient> _logger;
 
     private string? _imageBaseUrl;
     private readonly SemaphoreSlim _configLock = new(1, 1);
 
-    public TmdbClient(IHttpClientFactory httpClientFactory, ILogger<TmdbClient> logger)
+    // Cache key prefixes
+    private const string SearchCachePrefix = "tmdb:search:";
+    private const string MovieCachePrefix = "tmdb:movie:";
+
+    public TmdbClient(IHttpClientFactory httpClientFactory, IMemoryCache cache, ILogger<TmdbClient> logger)
     {
         _httpClientFactory = httpClientFactory;
+        _cache = cache;
         _logger = logger;
     }
+
+    private TimeSpan CacheDuration => TimeSpan.FromMinutes(
+        DynamicLibraryPlugin.Instance?.Configuration.CacheTtlMinutes ?? 60);
 
     public bool IsConfigured => !string.IsNullOrEmpty(GetApiKey());
 
@@ -57,11 +67,19 @@ public class TmdbClient : ITmdbClient
             return Array.Empty<TmdbMovieResult>();
         }
 
+        // Check cache first (case-insensitive)
+        var language = GetLanguageCode();
+        var cacheKey = $"{SearchCachePrefix}{query.ToLowerInvariant()}:{language ?? "default"}";
+        if (_cache.TryGetValue<IReadOnlyList<TmdbMovieResult>>(cacheKey, out var cachedResults) && cachedResults != null)
+        {
+            _logger.LogDebug("TMDB search cache hit for: {Query} ({Count} results)", query, cachedResults.Count);
+            return cachedResults;
+        }
+
         try
         {
             var client = CreateClient();
             var encodedQuery = Uri.EscapeDataString(query);
-            var language = GetLanguageCode();
             var languageParam = !string.IsNullOrEmpty(language) ? $"&language={language}" : "";
             var url = AppendApiKey($"{BaseUrl}/search/movie?query={encodedQuery}&include_adult=false{languageParam}");
 
@@ -77,7 +95,10 @@ public class TmdbClient : ITmdbClient
             var searchResponse = await response.Content.ReadFromJsonAsync<TmdbSearchResponse>(cancellationToken);
             var results = searchResponse?.Results ?? new List<TmdbMovieResult>();
 
-            _logger.LogDebug("TMDB search returned {Count} results", results.Count);
+            // Cache the results
+            _cache.Set(cacheKey, (IReadOnlyList<TmdbMovieResult>)results, CacheDuration);
+            _logger.LogDebug("TMDB search returned {Count} results (cached)", results.Count);
+
             return results;
         }
         catch (Exception ex)
@@ -95,10 +116,18 @@ public class TmdbClient : ITmdbClient
             return null;
         }
 
+        // Check cache first
+        var language = GetLanguageCode();
+        var cacheKey = $"{MovieCachePrefix}{movieId}:{language ?? "default"}";
+        if (_cache.TryGetValue<TmdbMovieDetails>(cacheKey, out var cachedMovie) && cachedMovie != null)
+        {
+            _logger.LogDebug("TMDB movie cache hit for: {MovieId}", movieId);
+            return cachedMovie;
+        }
+
         try
         {
             var client = CreateClient();
-            var language = GetLanguageCode();
             var languageParam = !string.IsNullOrEmpty(language) ? $"&language={language}" : "";
             // Use append_to_response to get credits in the same request
             var url = AppendApiKey($"{BaseUrl}/movie/{movieId}?append_to_response=credits{languageParam}");
@@ -112,7 +141,16 @@ public class TmdbClient : ITmdbClient
                 return null;
             }
 
-            return await response.Content.ReadFromJsonAsync<TmdbMovieDetails>(cancellationToken);
+            var movie = await response.Content.ReadFromJsonAsync<TmdbMovieDetails>(cancellationToken);
+
+            // Cache the result
+            if (movie != null)
+            {
+                _cache.Set(cacheKey, movie, CacheDuration);
+                _logger.LogDebug("TMDB movie cached: {MovieId}", movieId);
+            }
+
+            return movie;
         }
         catch (Exception ex)
         {
