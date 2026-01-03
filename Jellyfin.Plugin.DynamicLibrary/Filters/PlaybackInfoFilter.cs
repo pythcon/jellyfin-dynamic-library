@@ -304,7 +304,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
 
     /// <summary>
     /// Get the movie ID based on preference with fallback.
-    /// Movies can have: IMDB, TMDB
+    /// Movies can have: IMDB, TMDB, TVDB
     /// </summary>
     private (string? Id, string IdType) GetMovieId(BaseItemDto item, PreferredProviderId preference)
     {
@@ -313,32 +313,21 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             return (null, "none");
         }
 
-        // Try preferred ID first
-        switch (preference)
+        // Try preferred ID first, then fall back to others
+        var fallbackOrder = preference switch
         {
-            case PreferredProviderId.Imdb:
-                if (item.ProviderIds.TryGetValue("Imdb", out var imdbId) && !string.IsNullOrEmpty(imdbId))
-                {
-                    return (imdbId, "IMDB");
-                }
-                // Fallback to TMDB
-                if (item.ProviderIds.TryGetValue("Tmdb", out var tmdbFallback) && !string.IsNullOrEmpty(tmdbFallback))
-                {
-                    return (tmdbFallback, "TMDB");
-                }
-                break;
+            PreferredProviderId.Imdb => new[] { "Imdb", "Tmdb", "Tvdb" },
+            PreferredProviderId.Tmdb => new[] { "Tmdb", "Imdb", "Tvdb" },
+            PreferredProviderId.Tvdb => new[] { "Tvdb", "Imdb", "Tmdb" },
+            _ => new[] { "Imdb", "Tmdb", "Tvdb" }
+        };
 
-            case PreferredProviderId.Tmdb:
-                if (item.ProviderIds.TryGetValue("Tmdb", out var tmdbId) && !string.IsNullOrEmpty(tmdbId))
-                {
-                    return (tmdbId, "TMDB");
-                }
-                // Fallback to IMDB
-                if (item.ProviderIds.TryGetValue("Imdb", out var imdbFallback) && !string.IsNullOrEmpty(imdbFallback))
-                {
-                    return (imdbFallback, "IMDB");
-                }
-                break;
+        foreach (var provider in fallbackOrder)
+        {
+            if (item.ProviderIds.TryGetValue(provider, out var id) && !string.IsNullOrEmpty(id))
+            {
+                return (id, provider.ToUpperInvariant());
+            }
         }
 
         return (null, "none");
@@ -346,7 +335,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
 
     /// <summary>
     /// Get the series ID for an episode based on preference with fallback.
-    /// TV/Anime can have: IMDB, TVDB
+    /// TV/Anime can have: IMDB, TVDB, TMDB
     /// </summary>
     private (string? Id, string IdType) GetSeriesId(BaseItemDto episode, BaseItemDto? series, PreferredProviderId preference)
     {
@@ -358,32 +347,21 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             return (null, "none");
         }
 
-        // Try preferred ID first
-        switch (preference)
+        // Try preferred ID first, then fall back to others
+        var fallbackOrder = preference switch
         {
-            case PreferredProviderId.Imdb:
-                if (providerIds.TryGetValue("Imdb", out var imdbId) && !string.IsNullOrEmpty(imdbId))
-                {
-                    return (imdbId, "IMDB");
-                }
-                // Fallback to TVDB
-                if (providerIds.TryGetValue("Tvdb", out var tvdbFallback) && !string.IsNullOrEmpty(tvdbFallback))
-                {
-                    return (tvdbFallback, "TVDB");
-                }
-                break;
+            PreferredProviderId.Imdb => new[] { "Imdb", "Tvdb", "Tmdb" },
+            PreferredProviderId.Tvdb => new[] { "Tvdb", "Imdb", "Tmdb" },
+            PreferredProviderId.Tmdb => new[] { "Tmdb", "Imdb", "Tvdb" },
+            _ => new[] { "Imdb", "Tvdb", "Tmdb" }
+        };
 
-            case PreferredProviderId.Tvdb:
-                if (providerIds.TryGetValue("Tvdb", out var tvdbId) && !string.IsNullOrEmpty(tvdbId))
-                {
-                    return (tvdbId, "TVDB");
-                }
-                // Fallback to IMDB
-                if (providerIds.TryGetValue("Imdb", out var imdbFallback) && !string.IsNullOrEmpty(imdbFallback))
-                {
-                    return (imdbFallback, "IMDB");
-                }
-                break;
+        foreach (var provider in fallbackOrder)
+        {
+            if (providerIds.TryGetValue(provider, out var id) && !string.IsNullOrEmpty(id))
+            {
+                return (id, provider.ToUpperInvariant());
+            }
         }
 
         return (null, "none");

@@ -44,6 +44,21 @@ public enum StreamProvider
     Direct = 2
 }
 
+/// <summary>
+/// API source for content metadata.
+/// </summary>
+public enum ApiSource
+{
+    /// <summary>Disabled - don't search this content type.</summary>
+    None = 0,
+
+    /// <summary>Use TMDB API.</summary>
+    Tmdb = 1,
+
+    /// <summary>Use TVDB API.</summary>
+    Tvdb = 2
+}
+
 public class PluginConfiguration : BasePluginConfiguration
 {
     /// <summary>
@@ -77,24 +92,24 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool Enabled { get; set; } = true;
 
     /// <summary>
-    /// Gets or sets a value indicating whether to search movies.
+    /// Gets or sets the API source for movie searches.
     /// </summary>
-    public bool SearchMovies { get; set; } = true;
+    public ApiSource MovieApiSource { get; set; } = ApiSource.Tmdb;
 
     /// <summary>
-    /// Gets or sets a value indicating whether to search TV shows.
+    /// Gets or sets the API source for TV show searches.
     /// </summary>
-    public bool SearchTvShows { get; set; } = true;
+    public ApiSource TvShowApiSource { get; set; } = ApiSource.Tvdb;
 
     /// <summary>
-    /// Gets or sets a value indicating whether to search anime.
+    /// Gets or sets the maximum number of movie search results to return.
     /// </summary>
-    public bool SearchAnime { get; set; } = true;
+    public int MaxMovieResults { get; set; } = 20;
 
     /// <summary>
-    /// Gets or sets the maximum number of search results to return per API.
+    /// Gets or sets the maximum number of TV show search results to return.
     /// </summary>
-    public int MaxSearchResults { get; set; } = 20;
+    public int MaxTvShowResults { get; set; } = 20;
 
     /// <summary>
     /// Gets or sets a value indicating whether to automatically add media to Embedarr

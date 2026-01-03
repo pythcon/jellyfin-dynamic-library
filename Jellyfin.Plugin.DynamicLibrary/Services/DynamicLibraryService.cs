@@ -89,18 +89,31 @@ public class DynamicLibraryService
 
         var tasks = new List<Task<IEnumerable<BaseItemDto>>>();
         var config = Config;
-        var maxResults = config.MaxSearchResults;
 
-        // Search movies via TMDB
-        if (requestedTypes.Contains(BaseItemKind.Movie) && config.SearchMovies && _tmdbClient.IsConfigured)
+        // Search movies based on configured API source
+        if (requestedTypes.Contains(BaseItemKind.Movie) && config.MovieApiSource != ApiSource.None)
         {
-            tasks.Add(SearchMoviesAsync(query, maxResults, cancellationToken));
+            if (config.MovieApiSource == ApiSource.Tmdb && _tmdbClient.IsConfigured)
+            {
+                tasks.Add(SearchMoviesViaTmdbAsync(query, config.MaxMovieResults, cancellationToken));
+            }
+            else if (config.MovieApiSource == ApiSource.Tvdb && _tvdbClient.IsConfigured)
+            {
+                _logger.LogDebug("[DynamicLibrary] TVDB movie search not yet implemented");
+            }
         }
 
-        // Search TV shows via TVDB
-        if (requestedTypes.Contains(BaseItemKind.Series) && config.SearchTvShows && _tvdbClient.IsConfigured)
+        // Search TV shows based on configured API source
+        if (requestedTypes.Contains(BaseItemKind.Series) && config.TvShowApiSource != ApiSource.None)
         {
-            tasks.Add(SearchSeriesAsync(query, maxResults, cancellationToken));
+            if (config.TvShowApiSource == ApiSource.Tvdb && _tvdbClient.IsConfigured)
+            {
+                tasks.Add(SearchSeriesViaTvdbAsync(query, config.MaxTvShowResults, cancellationToken));
+            }
+            else if (config.TvShowApiSource == ApiSource.Tmdb && _tmdbClient.IsConfigured)
+            {
+                _logger.LogDebug("[DynamicLibrary] TMDB TV show search not yet implemented");
+            }
         }
 
         var results = (await Task.WhenAll(tasks)).SelectMany(r => r).ToList();
@@ -113,7 +126,7 @@ public class DynamicLibraryService
         return results;
     }
 
-    private async Task<IEnumerable<BaseItemDto>> SearchMoviesAsync(string query, int maxResults, CancellationToken cancellationToken)
+    private async Task<IEnumerable<BaseItemDto>> SearchMoviesViaTmdbAsync(string query, int maxResults, CancellationToken cancellationToken)
     {
         try
         {
@@ -151,7 +164,7 @@ public class DynamicLibraryService
         }
     }
 
-    private async Task<IEnumerable<BaseItemDto>> SearchSeriesAsync(string query, int maxResults, CancellationToken cancellationToken)
+    private async Task<IEnumerable<BaseItemDto>> SearchSeriesViaTvdbAsync(string query, int maxResults, CancellationToken cancellationToken)
     {
         try
         {
@@ -274,7 +287,7 @@ public class DynamicLibraryService
 
     /// <summary>
     /// Get the movie ID based on preference with fallback.
-    /// Movies can have: IMDB, TMDB
+    /// Movies can have: IMDB, TMDB, TVDB
     /// </summary>
     private (object? Id, string IdType) GetMovieId(BaseItemDto item, PreferredProviderId preference)
     {
@@ -283,32 +296,26 @@ public class DynamicLibraryService
             return (null, "none");
         }
 
-        // Try preferred ID first
-        switch (preference)
+        // Try preferred ID first, then fall back to others
+        var fallbackOrder = preference switch
         {
-            case PreferredProviderId.Imdb:
-                if (item.ProviderIds.TryGetValue("Imdb", out var imdbId) && !string.IsNullOrEmpty(imdbId))
-                {
-                    return (imdbId, "IMDB");
-                }
-                // Fallback to TMDB
-                if (item.ProviderIds.TryGetValue("Tmdb", out var tmdbFallback) && int.TryParse(tmdbFallback, out var tmdbInt))
-                {
-                    return (tmdbInt, "TMDB");
-                }
-                break;
+            PreferredProviderId.Imdb => new[] { "Imdb", "Tmdb", "Tvdb" },
+            PreferredProviderId.Tmdb => new[] { "Tmdb", "Imdb", "Tvdb" },
+            PreferredProviderId.Tvdb => new[] { "Tvdb", "Imdb", "Tmdb" },
+            _ => new[] { "Imdb", "Tmdb", "Tvdb" }
+        };
 
-            case PreferredProviderId.Tmdb:
-                if (item.ProviderIds.TryGetValue("Tmdb", out var tmdbId) && int.TryParse(tmdbId, out var tmdbIntPref))
+        foreach (var provider in fallbackOrder)
+        {
+            if (item.ProviderIds.TryGetValue(provider, out var id) && !string.IsNullOrEmpty(id))
+            {
+                // TMDB and TVDB IDs are numeric, IMDB is string
+                if (provider != "Imdb" && int.TryParse(id, out var numericId))
                 {
-                    return (tmdbIntPref, "TMDB");
+                    return (numericId, provider.ToUpperInvariant());
                 }
-                // Fallback to IMDB
-                if (item.ProviderIds.TryGetValue("Imdb", out var imdbFallback) && !string.IsNullOrEmpty(imdbFallback))
-                {
-                    return (imdbFallback, "IMDB");
-                }
-                break;
+                return (id, provider.ToUpperInvariant());
+            }
         }
 
         return (null, "none");
@@ -316,7 +323,7 @@ public class DynamicLibraryService
 
     /// <summary>
     /// Get the series ID based on preference with fallback.
-    /// TV/Anime can have: IMDB, TVDB
+    /// TV/Anime can have: IMDB, TVDB, TMDB
     /// </summary>
     private (object? Id, string IdType) GetSeriesId(BaseItemDto item, PreferredProviderId preference)
     {
@@ -325,32 +332,26 @@ public class DynamicLibraryService
             return (null, "none");
         }
 
-        // Try preferred ID first
-        switch (preference)
+        // Try preferred ID first, then fall back to others
+        var fallbackOrder = preference switch
         {
-            case PreferredProviderId.Imdb:
-                if (item.ProviderIds.TryGetValue("Imdb", out var imdbId) && !string.IsNullOrEmpty(imdbId))
-                {
-                    return (imdbId, "IMDB");
-                }
-                // Fallback to TVDB
-                if (item.ProviderIds.TryGetValue("Tvdb", out var tvdbFallback) && int.TryParse(tvdbFallback, out var tvdbInt))
-                {
-                    return (tvdbInt, "TVDB");
-                }
-                break;
+            PreferredProviderId.Imdb => new[] { "Imdb", "Tvdb", "Tmdb" },
+            PreferredProviderId.Tvdb => new[] { "Tvdb", "Imdb", "Tmdb" },
+            PreferredProviderId.Tmdb => new[] { "Tmdb", "Imdb", "Tvdb" },
+            _ => new[] { "Imdb", "Tvdb", "Tmdb" }
+        };
 
-            case PreferredProviderId.Tvdb:
-                if (item.ProviderIds.TryGetValue("Tvdb", out var tvdbId) && int.TryParse(tvdbId, out var tvdbIntPref))
+        foreach (var provider in fallbackOrder)
+        {
+            if (item.ProviderIds.TryGetValue(provider, out var id) && !string.IsNullOrEmpty(id))
+            {
+                // TMDB and TVDB IDs are numeric, IMDB is string
+                if (provider != "Imdb" && int.TryParse(id, out var numericId))
                 {
-                    return (tvdbIntPref, "TVDB");
+                    return (numericId, provider.ToUpperInvariant());
                 }
-                // Fallback to IMDB
-                if (item.ProviderIds.TryGetValue("Imdb", out var imdbFallback) && !string.IsNullOrEmpty(imdbFallback))
-                {
-                    return (imdbFallback, "IMDB");
-                }
-                break;
+                return (id, provider.ToUpperInvariant());
+            }
         }
 
         return (null, "none");

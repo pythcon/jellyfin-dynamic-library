@@ -15,8 +15,9 @@
               <h2 class="sectionTitle">Dynamic Library</h2>
             </div>
             <p class="fieldDescription">
-              Create an infinite library by searching TVDB and TMDB for content not in your library.
-              When you click on a result, Embedarr will generate STRM files automatically.
+              Ever wanted an infinite library?
+              Search TVDB and TMDB to discover content not in your library.
+              Optionally configure streaming via Embedarr or direct URL templates.
             </p>
           </div>
 
@@ -48,6 +49,90 @@
               <div class="fieldDescription">
                 API key for TMDB (used for movies).
                 Get one at <a href="https://www.themoviedb.org/settings/api" target="_blank">themoviedb.org</a>.
+              </div>
+            </div>
+          </div>
+
+          <div class="verticalSection">
+            <h3 class="sectionTitle">Content Sources</h3>
+            <p class="fieldDescription" style="margin-bottom: 1em;">
+              Select which API to use for each content type. Set to "Disabled" to skip searching that type.
+            </p>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="selMovieApiSource">Movies:</label>
+              <select is="emby-select" id="selMovieApiSource" class="emby-select">
+                <option value="None">Disabled</option>
+                <option value="Tmdb">TMDB</option>
+                <option value="Tvdb">TVDB</option>
+              </select>
+              <div class="fieldDescription">API source for movie searches. TMDB is recommended for movies.</div>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="selTvShowApiSource">TV Shows / Anime:</label>
+              <select is="emby-select" id="selTvShowApiSource" class="emby-select">
+                <option value="None">Disabled</option>
+                <option value="Tvdb">TVDB</option>
+                <option value="Tmdb">TMDB</option>
+              </select>
+              <div class="fieldDescription">API source for TV show and anime searches. TVDB is recommended.</div>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtMaxMovieResults">Max Movie Results:</label>
+              <input is="emby-input" type="number" id="txtMaxMovieResults" class="emby-input" min="1" max="100" />
+              <div class="fieldDescription">Maximum number of movie results to return (1-100).</div>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtMaxTvShowResults">Max TV Show Results:</label>
+              <input is="emby-input" type="number" id="txtMaxTvShowResults" class="emby-input" min="1" max="100" />
+              <div class="fieldDescription">Maximum number of TV show/anime results to return (1-100).</div>
+            </div>
+          </div>
+
+          <div class="verticalSection">
+            <h3 class="sectionTitle">Provider ID Preferences</h3>
+            <p class="fieldDescription" style="margin-bottom: 1em;">
+              Select which provider ID to use for streaming (Embedarr or Direct URL templates).
+              IMDB is recommended as it has the widest support. If the preferred ID is not available,
+              the plugin will fall back to other available IDs.
+            </p>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="selMoviePreferredId">Movies:</label>
+              <select is="emby-select" id="selMoviePreferredId" class="emby-select">
+                <option value="Imdb">IMDB (Recommended)</option>
+                <option value="Tmdb">TMDB</option>
+                <option value="Tvdb">TVDB</option>
+              </select>
+              <div class="fieldDescription">
+                ID used for streaming. Available IDs depend on the Content Source selected above.
+              </div>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="selTvShowPreferredId">TV Shows:</label>
+              <select is="emby-select" id="selTvShowPreferredId" class="emby-select">
+                <option value="Imdb">IMDB (Recommended)</option>
+                <option value="Tvdb">TVDB</option>
+                <option value="Tmdb">TMDB</option>
+              </select>
+              <div class="fieldDescription">
+                ID used for streaming. Available IDs depend on the Content Source selected above.
+              </div>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="selAnimePreferredId">Anime:</label>
+              <select is="emby-select" id="selAnimePreferredId" class="emby-select">
+                <option value="Imdb">IMDB (Recommended)</option>
+                <option value="Tvdb">TVDB</option>
+                <option value="Tmdb">TMDB</option>
+              </select>
+              <div class="fieldDescription">
+                ID used for streaming. Available IDs depend on the Content Source selected above.
               </div>
             </div>
           </div>
@@ -130,37 +215,6 @@
           </div>
 
           <div class="verticalSection">
-            <h3 class="sectionTitle">Search Options</h3>
-
-            <div class="checkboxContainer">
-              <label>
-                <input is="emby-checkbox" type="checkbox" id="chkSearchMovies" />
-                <span>Search Movies (TMDB)</span>
-              </label>
-            </div>
-
-            <div class="checkboxContainer">
-              <label>
-                <input is="emby-checkbox" type="checkbox" id="chkSearchTvShows" />
-                <span>Search TV Shows (TVDB)</span>
-              </label>
-            </div>
-
-            <div class="checkboxContainer">
-              <label>
-                <input is="emby-checkbox" type="checkbox" id="chkSearchAnime" />
-                <span>Search Anime (TVDB)</span>
-              </label>
-            </div>
-
-            <div class="inputContainer">
-              <label class="inputLabel inputLabelUnfocused" for="txtMaxSearchResults">Max Search Results:</label>
-              <input is="emby-input" type="number" id="txtMaxSearchResults" class="emby-input" min="1" max="100" />
-              <div class="fieldDescription">Maximum number of results to return per API (1-100).</div>
-            </div>
-          </div>
-
-          <div class="verticalSection">
             <h3 class="sectionTitle">Language Settings</h3>
 
             <div class="inputContainer">
@@ -209,49 +263,6 @@
           </div>
 
           <div class="verticalSection">
-            <h3 class="sectionTitle">Provider ID Preferences</h3>
-            <p class="fieldDescription" style="margin-bottom: 1em;">
-              Select which provider ID to use when sending requests to Embedarr for streaming.
-              IMDB is recommended as it has the widest support. If the preferred ID is not available,
-              the plugin will fall back to other available IDs.
-            </p>
-
-            <div class="inputContainer">
-              <label class="inputLabel inputLabelUnfocused" for="selMoviePreferredId">Movies:</label>
-              <select is="emby-select" id="selMoviePreferredId" class="emby-select">
-                <option value="Imdb">IMDB (Recommended)</option>
-                <option value="Tmdb">TMDB</option>
-              </select>
-              <div class="fieldDescription">
-                Movies are sourced from TMDB. IMDB ID is fetched from movie details. TMDB ID is always available.
-              </div>
-            </div>
-
-            <div class="inputContainer">
-              <label class="inputLabel inputLabelUnfocused" for="selTvShowPreferredId">TV Shows:</label>
-              <select is="emby-select" id="selTvShowPreferredId" class="emby-select">
-                <option value="Imdb">IMDB (Recommended)</option>
-                <option value="Tvdb">TVDB</option>
-              </select>
-              <div class="fieldDescription">
-                TV shows are sourced from TVDB. IMDB ID is fetched from remote IDs. TVDB ID is always available.
-              </div>
-            </div>
-
-            <div class="inputContainer">
-              <label class="inputLabel inputLabelUnfocused" for="selAnimePreferredId">Anime:</label>
-              <select is="emby-select" id="selAnimePreferredId" class="emby-select">
-                <option value="Imdb">IMDB (Recommended)</option>
-                <option value="Tvdb">TVDB</option>
-              </select>
-              <div class="fieldDescription">
-                Anime is sourced from TVDB. IMDB ID is fetched from remote IDs when available.
-                Note: Some anime may not have IMDB IDs; TVDB will be used as fallback.
-              </div>
-            </div>
-          </div>
-
-          <div class="verticalSection">
             <h3 class="sectionTitle">Cache Settings</h3>
 
             <div class="inputContainer">
@@ -285,10 +296,8 @@
         const txtEmbedarrUrl = document.querySelector('#txtEmbedarrUrl');
         const txtEmbedarrApiKey = document.querySelector('#txtEmbedarrApiKey');
         const chkCreateMediaOnView = document.querySelector('#chkCreateMediaOnView');
-        const chkSearchMovies = document.querySelector('#chkSearchMovies');
-        const chkSearchTvShows = document.querySelector('#chkSearchTvShows');
-        const chkSearchAnime = document.querySelector('#chkSearchAnime');
-        const txtMaxSearchResults = document.querySelector('#txtMaxSearchResults');
+        const txtMaxMovieResults = document.querySelector('#txtMaxMovieResults');
+        const txtMaxTvShowResults = document.querySelector('#txtMaxTvShowResults');
         const txtCacheTtlMinutes = document.querySelector('#txtCacheTtlMinutes');
 
         // Cache DOM elements - Direct URL templates
@@ -298,6 +307,8 @@
 
         // Cache DOM elements - selects
         const selStreamProvider = document.querySelector('#selStreamProvider');
+        const selMovieApiSource = document.querySelector('#selMovieApiSource');
+        const selTvShowApiSource = document.querySelector('#selTvShowApiSource');
         const selLanguageMode = document.querySelector('#selLanguageMode');
         const selPreferredLanguage = document.querySelector('#selPreferredLanguage');
         const selMoviePreferredId = document.querySelector('#selMoviePreferredId');
@@ -347,9 +358,6 @@
             // Checkboxes
             chkEnabled.checked = config.Enabled ?? true;
             chkCreateMediaOnView.checked = config.CreateMediaOnView ?? false;
-            chkSearchMovies.checked = config.SearchMovies ?? true;
-            chkSearchTvShows.checked = config.SearchTvShows ?? true;
-            chkSearchAnime.checked = config.SearchAnime ?? true;
 
             // Text inputs
             txtTvdbApiKey.value = config.TvdbApiKey || '';
@@ -358,7 +366,8 @@
             txtEmbedarrApiKey.value = config.EmbedarrApiKey || '';
 
             // Number inputs
-            txtMaxSearchResults.value = config.MaxSearchResults ?? 20;
+            txtMaxMovieResults.value = config.MaxMovieResults ?? 20;
+            txtMaxTvShowResults.value = config.MaxTvShowResults ?? 20;
             txtCacheTtlMinutes.value = config.CacheTtlMinutes ?? 60;
 
             // Direct URL templates
@@ -369,6 +378,8 @@
             // Select dropdowns - use helper to handle custom element timing
             // Enum values come as strings from C# JSON serialization
             setSelectValue(selStreamProvider, config.StreamProvider || 'None');
+            setSelectValue(selMovieApiSource, config.MovieApiSource || 'Tmdb');
+            setSelectValue(selTvShowApiSource, config.TvShowApiSource || 'Tvdb');
             setSelectValue(selLanguageMode, config.LanguageMode || 'Default');
             setSelectValue(selPreferredLanguage, config.PreferredLanguage || 'eng');
             setSelectValue(selMoviePreferredId, config.MoviePreferredId || 'Imdb');
@@ -394,9 +405,6 @@
             // Checkboxes
             config.Enabled = chkEnabled.checked;
             config.CreateMediaOnView = chkCreateMediaOnView.checked;
-            config.SearchMovies = chkSearchMovies.checked;
-            config.SearchTvShows = chkSearchTvShows.checked;
-            config.SearchAnime = chkSearchAnime.checked;
 
             // Text inputs
             config.TvdbApiKey = txtTvdbApiKey.value.trim();
@@ -405,7 +413,8 @@
             config.EmbedarrApiKey = txtEmbedarrApiKey.value.trim();
 
             // Number inputs
-            config.MaxSearchResults = parseInt(txtMaxSearchResults.value, 10) || 20;
+            config.MaxMovieResults = parseInt(txtMaxMovieResults.value, 10) || 20;
+            config.MaxTvShowResults = parseInt(txtMaxTvShowResults.value, 10) || 20;
             config.CacheTtlMinutes = parseInt(txtCacheTtlMinutes.value, 10) || 60;
 
             // Direct URL templates
@@ -415,6 +424,8 @@
 
             // Select dropdowns - enum values are serialized as strings
             config.StreamProvider = selStreamProvider.value;
+            config.MovieApiSource = selMovieApiSource.value;
+            config.TvShowApiSource = selTvShowApiSource.value;
             config.LanguageMode = selLanguageMode.value;
             config.PreferredLanguage = selPreferredLanguage.value;
             config.MoviePreferredId = selMoviePreferredId.value;
