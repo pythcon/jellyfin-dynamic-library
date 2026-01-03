@@ -22,6 +22,7 @@ public class ServiceRegistrator : IPluginServiceRegistrator
         services.AddSingleton<ITvdbClient, TvdbClient>();
         services.AddSingleton<ITmdbClient, TmdbClient>();
         services.AddSingleton<IEmbedarrClient, EmbedarrClient>();
+        services.AddSingleton<AniListClient>();
 
         // Register caches and services
         services.AddSingleton<DynamicItemCache>();

@@ -16,6 +16,7 @@ public class SearchResultFactory
 {
     private readonly ITmdbClient _tmdbClient;
     private readonly ITvdbClient _tvdbClient;
+    private readonly AniListClient _aniListClient;
     private readonly DynamicItemCache _itemCache;
     private readonly IServerApplicationHost _serverApplicationHost;
     private readonly ILogger<SearchResultFactory> _logger;
@@ -26,12 +27,14 @@ public class SearchResultFactory
     public SearchResultFactory(
         ITmdbClient tmdbClient,
         ITvdbClient tvdbClient,
+        AniListClient aniListClient,
         DynamicItemCache itemCache,
         IServerApplicationHost serverApplicationHost,
         ILogger<SearchResultFactory> logger)
     {
         _tmdbClient = tmdbClient;
         _tvdbClient = tvdbClient;
+        _aniListClient = aniListClient;
         _itemCache = itemCache;
         _serverApplicationHost = serverApplicationHost;
         _logger = logger;
@@ -327,6 +330,23 @@ public class SearchResultFactory
         // Create seasons and episodes (with translations if language override enabled)
         await CreateSeasonsAndEpisodesAsync(details, dto.Id, dto.Name ?? "Unknown Series", languageCode, cancellationToken);
 
+        // If this is anime, query AniList for the AniList ID
+        if (DynamicLibraryService.IsAnime(dto))
+        {
+            var anilistId = await _aniListClient.SearchByTitleAsync(dto.Name ?? "", cancellationToken);
+            if (anilistId.HasValue)
+            {
+                dto.ProviderIds ??= new Dictionary<string, string>();
+                dto.ProviderIds["AniList"] = anilistId.Value.ToString();
+                _logger.LogInformation("[DynamicLibrary] EnrichSeriesDto: Added AniList ID {AniListId} for anime '{Name}'",
+                    anilistId.Value, dto.Name);
+            }
+            else
+            {
+                _logger.LogDebug("[DynamicLibrary] EnrichSeriesDto: No AniList ID found for anime '{Name}'", dto.Name);
+            }
+        }
+
         // Update cache with enriched data
         _itemCache.StoreItem(dto, _itemCache.GetImageUrl(dto.Id));
 
@@ -504,7 +524,7 @@ public class SearchResultFactory
     /// <summary>
     /// Create an Episode DTO from TVDB episode data.
     /// </summary>
-    public BaseItemDto CreateEpisodeDto(TvdbEpisode episode, Guid seriesId, string seriesName, Guid seasonId, TvdbTranslationData? translation = null)
+    public BaseItemDto CreateEpisodeDto(TvdbEpisode episode, Guid seriesId, string seriesName, Guid seasonId, TvdbTranslationData? translation = null, int? absoluteNumber = null)
     {
         var episodeId = GenerateGuid($"tvdb:episode:{episode.Id}");
 
@@ -535,7 +555,8 @@ public class SearchResultFactory
             ProviderIds = new Dictionary<string, string>
             {
                 { "Tvdb", episode.Id.ToString() },
-                { DynamicLibraryProviderId, $"episode:{episode.Id}" }
+                { DynamicLibraryProviderId, $"episode:{episode.Id}" },
+                { "AbsoluteNumber", absoluteNumber?.ToString() ?? "" }
             },
             UserData = new UserItemDataDto
             {
@@ -673,6 +694,11 @@ public class SearchResultFactory
                 .ThenBy(e => e.Number)
                 .ToList();
 
+            // Build episode count per season for absolute number fallback calculation
+            var episodeCountBySeason = episodes
+                .GroupBy(e => e.SeasonNumber)
+                .ToDictionary(g => g.Key, g => g.Count());
+
             // Fetch episode translations in parallel if language override is enabled
             var episodeTranslations = new Dictionary<int, TvdbTranslationData>();
             if (!string.IsNullOrEmpty(languageCode))
@@ -713,7 +739,11 @@ public class SearchResultFactory
                 // Get translation if available
                 episodeTranslations.TryGetValue(episode.Id, out var translation);
 
-                var episodeDto = CreateEpisodeDto(episode, seriesId, seriesName, seasonId, translation);
+                // Calculate absolute episode number: use TVDB value if available, otherwise calculate from season/episode
+                int absoluteNumber = episode.AbsoluteNumber
+                    ?? (GetCumulativeEpisodeCount(episodeCountBySeason, episode.SeasonNumber) + episode.Number);
+
+                var episodeDto = CreateEpisodeDto(episode, seriesId, seriesName, seasonId, translation, absoluteNumber);
                 episodeDtos.Add(episodeDto);
             }
 
@@ -722,5 +752,16 @@ public class SearchResultFactory
 
         _logger.LogDebug("[DynamicLibrary] Created {SeasonCount} seasons and {EpisodeCount} episodes for {SeriesName}",
             seasonDtos.Count, details.Episodes?.Count ?? 0, seriesName);
+    }
+
+    /// <summary>
+    /// Calculate the cumulative episode count from all seasons before the given season.
+    /// Used for calculating absolute episode numbers when TVDB doesn't provide them.
+    /// </summary>
+    private static int GetCumulativeEpisodeCount(Dictionary<int, int> episodeCountBySeason, int currentSeason)
+    {
+        return episodeCountBySeason
+            .Where(kvp => kvp.Key < currentSeason)
+            .Sum(kvp => kvp.Value);
     }
 }

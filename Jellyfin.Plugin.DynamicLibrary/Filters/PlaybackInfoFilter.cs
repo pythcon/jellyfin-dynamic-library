@@ -208,13 +208,16 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         }
 
         // Replace placeholders
+        var absoluteEpisode = providerIds.GetValueOrDefault("AbsoluteNumber", "");
         var url = template
             .Replace("{id}", preferredId ?? "", StringComparison.OrdinalIgnoreCase)
             .Replace("{imdb}", seriesProviderIds.GetValueOrDefault("Imdb", ""), StringComparison.OrdinalIgnoreCase)
             .Replace("{tmdb}", providerIds.GetValueOrDefault("Tmdb", ""), StringComparison.OrdinalIgnoreCase)
             .Replace("{tvdb}", seriesProviderIds.GetValueOrDefault("Tvdb", ""), StringComparison.OrdinalIgnoreCase)
+            .Replace("{anilist}", seriesProviderIds.GetValueOrDefault("AniList", ""), StringComparison.OrdinalIgnoreCase)
             .Replace("{season}", season?.ToString() ?? "1", StringComparison.OrdinalIgnoreCase)
             .Replace("{episode}", episode?.ToString() ?? "1", StringComparison.OrdinalIgnoreCase)
+            .Replace("{absolute}", absoluteEpisode, StringComparison.OrdinalIgnoreCase)
             .Replace("{title}", Uri.EscapeDataString(item.Name ?? ""), StringComparison.OrdinalIgnoreCase);
 
         _logger.LogDebug("[DynamicLibrary] Direct URL built: {Url}", url);
@@ -350,10 +353,11 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         // Try preferred ID first, then fall back to others
         var fallbackOrder = preference switch
         {
-            PreferredProviderId.Imdb => new[] { "Imdb", "Tvdb", "Tmdb" },
-            PreferredProviderId.Tvdb => new[] { "Tvdb", "Imdb", "Tmdb" },
-            PreferredProviderId.Tmdb => new[] { "Tmdb", "Imdb", "Tvdb" },
-            _ => new[] { "Imdb", "Tvdb", "Tmdb" }
+            PreferredProviderId.Imdb => new[] { "Imdb", "Tvdb", "AniList", "Tmdb" },
+            PreferredProviderId.Tvdb => new[] { "Tvdb", "Imdb", "AniList", "Tmdb" },
+            PreferredProviderId.Tmdb => new[] { "Tmdb", "Imdb", "Tvdb", "AniList" },
+            PreferredProviderId.AniList => new[] { "AniList", "Tvdb", "Imdb", "Tmdb" },
+            _ => new[] { "Imdb", "Tvdb", "AniList", "Tmdb" }
         };
 
         foreach (var provider in fallbackOrder)

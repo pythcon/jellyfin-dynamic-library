@@ -288,6 +288,9 @@ public class TvdbEpisode
 
     [JsonPropertyName("runtime")]
     public int? Runtime { get; set; }
+
+    [JsonPropertyName("absoluteNumber")]
+    public int? AbsoluteNumber { get; set; }
 }
 
 public class TvdbRemoteId

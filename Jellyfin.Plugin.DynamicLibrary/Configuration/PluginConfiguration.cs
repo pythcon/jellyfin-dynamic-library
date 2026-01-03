@@ -14,7 +14,10 @@ public enum PreferredProviderId
     Tmdb = 1,
 
     /// <summary>TVDB ID (numeric). Available for TV/anime from TVDB.</summary>
-    Tvdb = 2
+    Tvdb = 2,
+
+    /// <summary>AniList ID (numeric). Available for anime from TVDB's remoteIds.</summary>
+    AniList = 3
 }
 
 /// <summary>
@@ -140,7 +143,7 @@ public class PluginConfiguration : BasePluginConfiguration
 
     /// <summary>
     /// Gets or sets the URL template for anime streams in Direct mode.
-    /// Placeholders: {id} (preferred ID), {imdb}, {tvdb}, {season}, {episode}, {title}
+    /// Placeholders: {id} (preferred ID), {imdb}, {tvdb}, {anilist}, {season}, {episode}, {absolute}, {title}
     /// </summary>
     public string DirectAnimeUrlTemplate { get; set; } = string.Empty;
 
@@ -179,8 +182,7 @@ public class PluginConfiguration : BasePluginConfiguration
 
     /// <summary>
     /// Gets or sets the preferred provider ID for anime lookups.
-    /// Available options: IMDB (from TVDB RemoteIds), TVDB (always available).
-    /// Note: AniList/AniDB IDs are available in TVDB but not commonly used by Embedarr.
+    /// Available options: IMDB, TVDB, AniList (all from TVDB RemoteIds).
     /// Default: IMDB.
     /// </summary>
     public PreferredProviderId AnimePreferredId { get; set; } = PreferredProviderId.Imdb;

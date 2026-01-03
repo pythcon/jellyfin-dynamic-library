@@ -129,10 +129,11 @@
               <select is="emby-select" id="selAnimePreferredId" class="emby-select">
                 <option value="Imdb">IMDB (Recommended)</option>
                 <option value="Tvdb">TVDB</option>
+                <option value="AniList">AniList</option>
                 <option value="Tmdb">TMDB</option>
               </select>
               <div class="fieldDescription">
-                ID used for streaming. Available IDs depend on the Content Source selected above.
+                ID used for streaming. AniList IDs are extracted from TVDB when available.
               </div>
             </div>
           </div>
@@ -190,8 +191,10 @@
               <code>{imdb}</code> - IMDB ID (e.g., tt1234567)<br>
               <code>{tmdb}</code> - TMDB ID (numeric, movies only)<br>
               <code>{tvdb}</code> - TVDB ID (numeric, TV/anime only)<br>
+              <code>{anilist}</code> - AniList ID (numeric, anime only)<br>
               <code>{season}</code> - Season number<br>
               <code>{episode}</code> - Episode number<br>
+              <code>{absolute}</code> - Absolute episode number (anime only)<br>
               <code>{title}</code> - URL-encoded title
             </p>
 
@@ -209,8 +212,8 @@
 
             <div class="inputContainer">
               <label class="inputLabel inputLabelUnfocused" for="txtDirectAnimeUrl">Anime URL Template:</label>
-              <input is="emby-input" type="text" id="txtDirectAnimeUrl" class="emby-input" placeholder="https://example.com/anime/{tvdb}/{season}/{episode}.m3u8" />
-              <div class="fieldDescription">Template for anime episodes. Placeholders: {id}, {imdb}, {tvdb}, {season}, {episode}, {title}</div>
+              <input is="emby-input" type="text" id="txtDirectAnimeUrl" class="emby-input" placeholder="https://example.com/anime/{anilist}/{absolute}.m3u8" />
+              <div class="fieldDescription">Template for anime episodes. Placeholders: {id}, {imdb}, {tvdb}, {anilist}, {season}, {episode}, {absolute}, {title}</div>
             </div>
           </div>
 
