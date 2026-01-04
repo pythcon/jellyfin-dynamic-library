@@ -3,10 +3,12 @@ using System.Security.Cryptography;
 using System.Text;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.DynamicLibrary.Api;
+using Jellyfin.Plugin.DynamicLibrary.Configuration;
 using Jellyfin.Plugin.DynamicLibrary.Models;
 using MediaBrowser.Controller;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.MediaInfo;
 using Microsoft.Extensions.Logging;
 using ImageType = MediaBrowser.Model.Entities.ImageType;
 
@@ -327,11 +329,12 @@ public class SearchResultFactory
             dto.ChildCount = regularSeasons.Count;
         }
 
-        // Create seasons and episodes (with translations if language override enabled)
-        await CreateSeasonsAndEpisodesAsync(details, dto.Id, dto.Name ?? "Unknown Series", languageCode, cancellationToken);
+        // Check if this is anime (needed for episode MediaSources and AniList lookup)
+        var isAnime = DynamicLibraryService.IsAnime(dto);
 
-        // If this is anime, query AniList for the AniList ID
-        if (DynamicLibraryService.IsAnime(dto))
+        // If this is anime, query AniList for the AniList ID BEFORE creating episodes
+        // (so episodes can use AniList ID in their stream URLs)
+        if (isAnime)
         {
             var anilistId = await _aniListClient.SearchByTitleAsync(dto.Name ?? "", cancellationToken);
             if (anilistId.HasValue)
@@ -347,8 +350,11 @@ public class SearchResultFactory
             }
         }
 
-        // Update cache with enriched data
+        // Store series in cache BEFORE creating episodes (so episodes can look it up with all provider IDs)
         _itemCache.StoreItem(dto, _itemCache.GetImageUrl(dto.Id));
+
+        // Create seasons and episodes (with translations if language override enabled)
+        await CreateSeasonsAndEpisodesAsync(details, dto.Id, dto.Name ?? "Unknown Series", languageCode, isAnime, cancellationToken);
 
         return dto;
     }
@@ -524,7 +530,7 @@ public class SearchResultFactory
     /// <summary>
     /// Create an Episode DTO from TVDB episode data.
     /// </summary>
-    public BaseItemDto CreateEpisodeDto(TvdbEpisode episode, Guid seriesId, string seriesName, Guid seasonId, TvdbTranslationData? translation = null, int? absoluteNumber = null)
+    public BaseItemDto CreateEpisodeDto(TvdbEpisode episode, Guid seriesId, string seriesName, Guid seasonId, TvdbTranslationData? translation = null, int? absoluteNumber = null, bool isAnime = false)
     {
         var episodeId = GenerateGuid($"tvdb:episode:{episode.Id}");
 
@@ -582,6 +588,7 @@ public class SearchResultFactory
         }
 
         // Set image if available
+        string? episodeImageUrl = null;
         if (!string.IsNullOrEmpty(episode.Image))
         {
             dto.ImageTags = new Dictionary<ImageType, string>
@@ -589,16 +596,130 @@ public class SearchResultFactory
                 { ImageType.Primary, "dynamic" }
             };
             dto.PrimaryImageAspectRatio = 1.78; // 16:9 for episode thumbnails
-            // Ensure full URL for TVDB images
-            var imageUrl = GetFullTvdbImageUrl(episode.Image);
-            _itemCache.StoreItem(dto, imageUrl);
+            episodeImageUrl = GetFullTvdbImageUrl(episode.Image);
+        }
+
+        // Add MediaSources for version selector (sub/dub) on item details page
+        var config = DynamicLibraryPlugin.Instance?.Configuration;
+
+        // Log the conditions for debugging (WRN level so it's visible)
+        _logger.LogWarning("[DynamicLibrary] CreateEpisodeDto '{Name}': isAnime={IsAnime}, EnableAudioVersions={EnableAudio}, StreamProvider={Provider}",
+            dto.Name, isAnime, config?.EnableAnimeAudioVersions, config?.StreamProvider);
+
+        if (isAnime && config?.EnableAnimeAudioVersions == true && config.StreamProvider == StreamProvider.Direct)
+        {
+            var audioTracks = config.AnimeAudioTracks?
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                ?? new[] { "sub", "dub" };
+
+            if (audioTracks.Length > 0)
+            {
+                // Get series from cache to access provider IDs for URL building
+                var series = _itemCache.GetItem(seriesId);
+                var season = dto.ParentIndexNumber ?? 1;
+                var episodeNum = dto.IndexNumber ?? 1;
+
+                dto.MediaSources = audioTracks.Select(track =>
+                {
+                    // Build the actual stream URL for this audio track
+                    var streamUrl = BuildAnimeStreamUrl(config.DirectAnimeUrlTemplate, dto, series, season, episodeNum, track);
+
+                    // Generate a valid GUID for the MediaSource ID (client expects GUID format)
+                    var sourceId = GenerateMediaSourceGuid(dto.Id, track);
+
+                    // Store mapping so we can resolve MediaSource ID -> Episode ID later
+                    _itemCache.StoreMediaSourceMapping(sourceId, dto.Id);
+
+                    _logger.LogWarning("[DynamicLibrary] Built stream URL for '{Name}' ({Track}): {Url}, SourceId={SourceId}",
+                        dto.Name, track, streamUrl, sourceId);
+
+                    return new MediaSourceInfo
+                    {
+                        Id = sourceId,
+                        Name = track.ToUpperInvariant(),  // "SUB", "DUB" shown in version selector
+                        Path = streamUrl,  // Actual stream URL - client plays this directly
+                        Protocol = MediaProtocol.Http,
+                        Type = MediaSourceType.Default,
+                        Container = "hls",
+                        IsRemote = true,
+                        SupportsDirectPlay = true,  // Client can play this URL directly
+                        SupportsDirectStream = false,
+                        SupportsTranscoding = false,
+                        SupportsProbing = false,
+                        RunTimeTicks = dto.RunTimeTicks,
+                        MediaStreams = new List<MediaStream>()
+                    };
+                }).ToArray();
+
+                _logger.LogWarning("[DynamicLibrary] Added {Count} MediaSources to episode '{Name}': {Tracks}",
+                    audioTracks.Length, dto.Name, string.Join(", ", audioTracks));
+            }
         }
         else
         {
-            _itemCache.StoreItem(dto);
+            _logger.LogWarning("[DynamicLibrary] NOT adding MediaSources to episode '{Name}' - conditions not met", dto.Name);
         }
 
+        // Store in cache AFTER MediaSources are added
+        _itemCache.StoreItem(dto, episodeImageUrl);
+
         return dto;
+    }
+
+    /// <summary>
+    /// Generate a deterministic GUID for a MediaSource based on episode ID and audio track.
+    /// This ensures the client gets a valid GUID format for the MediaSource ID.
+    /// </summary>
+    private static string GenerateMediaSourceGuid(Guid episodeId, string audioTrack)
+    {
+        var input = $"{episodeId:N}:{audioTrack.ToLowerInvariant()}";
+        using var md5 = MD5.Create();
+        var hash = md5.ComputeHash(Encoding.UTF8.GetBytes(input));
+        return new Guid(hash).ToString("N");
+    }
+
+    /// <summary>
+    /// Build the stream URL for an anime episode using the DirectAnimeUrlTemplate.
+    /// </summary>
+    private string BuildAnimeStreamUrl(string template, BaseItemDto episode, BaseItemDto? series, int season, int episodeNum, string audioTrack)
+    {
+        if (string.IsNullOrEmpty(template))
+        {
+            _logger.LogWarning("[DynamicLibrary] DirectAnimeUrlTemplate is empty");
+            return string.Empty;
+        }
+
+        var episodeProviderIds = episode.ProviderIds ?? new Dictionary<string, string>();
+        var seriesProviderIds = series?.ProviderIds ?? episodeProviderIds;
+
+        // Get absolute episode number if available
+        var absoluteEpisode = episodeProviderIds.GetValueOrDefault("AbsoluteNumber", "");
+
+        // Build URL by replacing placeholders
+        var url = template
+            .Replace("{imdb}", seriesProviderIds.GetValueOrDefault("Imdb", ""), StringComparison.OrdinalIgnoreCase)
+            .Replace("{tvdb}", seriesProviderIds.GetValueOrDefault("Tvdb", ""), StringComparison.OrdinalIgnoreCase)
+            .Replace("{anilist}", seriesProviderIds.GetValueOrDefault("AniList", ""), StringComparison.OrdinalIgnoreCase)
+            .Replace("{tmdb}", seriesProviderIds.GetValueOrDefault("Tmdb", ""), StringComparison.OrdinalIgnoreCase)
+            .Replace("{season}", season.ToString(), StringComparison.OrdinalIgnoreCase)
+            .Replace("{episode}", episodeNum.ToString(), StringComparison.OrdinalIgnoreCase)
+            .Replace("{absolute}", absoluteEpisode, StringComparison.OrdinalIgnoreCase)
+            .Replace("{audio}", audioTrack.ToLowerInvariant(), StringComparison.OrdinalIgnoreCase)
+            .Replace("{title}", Uri.EscapeDataString(episode.Name ?? ""), StringComparison.OrdinalIgnoreCase);
+
+        // Handle {id} placeholder - use preferred ID based on config
+        var config = DynamicLibraryPlugin.Instance?.Configuration;
+        var preferredId = config?.AnimePreferredId ?? PreferredProviderId.Imdb;
+        var idValue = preferredId switch
+        {
+            PreferredProviderId.Imdb => seriesProviderIds.GetValueOrDefault("Imdb", ""),
+            PreferredProviderId.Tvdb => seriesProviderIds.GetValueOrDefault("Tvdb", ""),
+            PreferredProviderId.AniList => seriesProviderIds.GetValueOrDefault("AniList", ""),
+            _ => seriesProviderIds.GetValueOrDefault("Imdb", "")
+        };
+        url = url.Replace("{id}", idValue, StringComparison.OrdinalIgnoreCase);
+
+        return url;
     }
 
     /// <summary>
@@ -631,6 +752,7 @@ public class SearchResultFactory
         Guid seriesId,
         string seriesName,
         string? languageCode,
+        bool isAnime = false,
         CancellationToken cancellationToken = default)
     {
         if (details.Seasons == null || details.Seasons.Count == 0)
@@ -743,7 +865,7 @@ public class SearchResultFactory
                 int absoluteNumber = episode.AbsoluteNumber
                     ?? (GetCumulativeEpisodeCount(episodeCountBySeason, episode.SeasonNumber) + episode.Number);
 
-                var episodeDto = CreateEpisodeDto(episode, seriesId, seriesName, seasonId, translation, absoluteNumber);
+                var episodeDto = CreateEpisodeDto(episode, seriesId, seriesName, seasonId, translation, absoluteNumber, isAnime);
                 episodeDtos.Add(episodeDto);
             }
 

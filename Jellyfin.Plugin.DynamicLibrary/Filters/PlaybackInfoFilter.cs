@@ -74,23 +74,63 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         _logger.LogDebug("[DynamicLibrary] Intercepting PlaybackInfo for dynamic item: {Name} ({Id})",
             cachedItem.Name, itemId);
 
-        // Get stream URL from Embedarr or Direct
+        var config = Config;
+
+        // Extract selected mediaSourceId from request (query string or body)
+        var selectedMediaSourceId = GetSelectedMediaSourceId(context);
+        if (!string.IsNullOrEmpty(selectedMediaSourceId))
+        {
+            _logger.LogDebug("[DynamicLibrary] Selected mediaSourceId: {MediaSourceId}", selectedMediaSourceId);
+        }
+
+        // Handle Direct mode with potential multi-URL support for anime versions
+        if (config.StreamProvider == StreamProvider.Direct)
+        {
+            var streamUrls = BuildDirectStreamUrls(cachedItem);
+
+            if (streamUrls.Count == 0)
+            {
+                _logger.LogWarning("[DynamicLibrary] No stream URLs available for {Name}, playback may fail", cachedItem.Name);
+                await next();
+                return;
+            }
+
+            // If a specific mediaSource was selected, filter to just that one
+            if (!string.IsNullOrEmpty(selectedMediaSourceId) && streamUrls.Count > 1)
+            {
+                var selectedUrl = FindSelectedStreamUrl(streamUrls, selectedMediaSourceId, cachedItem.Id);
+                if (selectedUrl.HasValue)
+                {
+                    _logger.LogWarning("[DynamicLibrary] PlaybackInfo: Matched version '{AudioType}' for {Name}, URL={Url}",
+                        selectedUrl.Value.AudioType, cachedItem.Name, selectedUrl.Value.Url);
+                    var response = BuildPlaybackInfoResponse(cachedItem, new List<(string, string)> { selectedUrl.Value });
+                    context.Result = new OkObjectResult(response);
+                    return;
+                }
+                _logger.LogWarning("[DynamicLibrary] Selected mediaSourceId '{Id}' not found, returning all sources", selectedMediaSourceId);
+            }
+
+            _logger.LogDebug("[DynamicLibrary] Got {Count} stream URL(s) for {Name}", streamUrls.Count, cachedItem.Name);
+
+            var allSourcesResponse = BuildPlaybackInfoResponse(cachedItem, streamUrls);
+            context.Result = new OkObjectResult(allSourcesResponse);
+            return;
+        }
+
+        // For Embedarr or other providers, use single URL method
         var streamUrl = await GetStreamUrlAsync(cachedItem, context.HttpContext.RequestAborted);
 
         if (string.IsNullOrEmpty(streamUrl))
         {
             _logger.LogWarning("[DynamicLibrary] No stream URL available for {Name}, playback may fail", cachedItem.Name);
-            // Let Jellyfin handle it - will likely fail but at least gives an error
             await next();
             return;
         }
 
         _logger.LogDebug("[DynamicLibrary] Got stream URL for {Name}: {Url}", cachedItem.Name, streamUrl);
 
-        // Build PlaybackInfoResponse with the stream URL
-        var response = BuildPlaybackInfoResponse(cachedItem, streamUrl);
-
-        context.Result = new OkObjectResult(response);
+        var response2 = BuildPlaybackInfoResponse(cachedItem, streamUrl);
+        context.Result = new OkObjectResult(response2);
     }
 
     /// <summary>
@@ -138,7 +178,73 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
     }
 
     /// <summary>
-    /// Build a stream URL from templates for Direct mode.
+    /// Build stream URLs for Direct mode. Returns multiple URLs for anime with audio versions enabled.
+    /// </summary>
+    private List<(string Url, string AudioType)> BuildDirectStreamUrls(BaseItemDto item)
+    {
+        var config = Config;
+        var urls = new List<(string Url, string AudioType)>();
+
+        if (item.Type == BaseItemKind.Movie)
+        {
+            var template = config.DirectMovieUrlTemplate;
+            if (!string.IsNullOrEmpty(template))
+            {
+                var url = ReplacePlaceholders(template, item, null, null);
+                urls.Add((url, string.Empty));
+            }
+            return urls;
+        }
+
+        if (item.Type == BaseItemKind.Episode)
+        {
+            var series = item.SeriesId.HasValue ? _itemCache.GetItem(item.SeriesId.Value) : null;
+            var isAnime = series != null && DynamicLibraryService.IsAnime(series);
+
+            var template = isAnime ? config.DirectAnimeUrlTemplate : config.DirectTvUrlTemplate;
+            if (string.IsNullOrEmpty(template))
+            {
+                _logger.LogWarning("[DynamicLibrary] Direct {Type} URL template is not configured",
+                    isAnime ? "anime" : "TV");
+                return urls;
+            }
+
+            var season = item.ParentIndexNumber ?? 1;
+            var episode = item.IndexNumber ?? 1;
+
+            // For anime with audio versions enabled, return multiple URLs (one per track)
+            if (isAnime && config.EnableAnimeAudioVersions)
+            {
+                var tracks = config.AnimeAudioTracks?
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+                if (tracks == null || tracks.Length == 0)
+                {
+                    tracks = new[] { "sub" };
+                }
+
+                _logger.LogDebug("[DynamicLibrary] Building {Count} audio versions for anime: {Tracks}",
+                    tracks.Length, string.Join(", ", tracks));
+
+                foreach (var track in tracks)
+                {
+                    var url = ReplacePlaceholders(template, item, season, episode, series, track);
+                    urls.Add((url, track));
+                }
+            }
+            else
+            {
+                // Single URL for non-anime or when audio versions disabled
+                var url = ReplacePlaceholders(template, item, season, episode, series, null);
+                urls.Add((url, string.Empty));
+            }
+        }
+
+        return urls;
+    }
+
+    /// <summary>
+    /// Build a stream URL from templates for Direct mode (single URL).
     /// </summary>
     private string? BuildDirectStreamUrl(BaseItemDto item)
     {
@@ -388,34 +494,131 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         return (null, "none");
     }
 
-    private PlaybackInfoResponse BuildPlaybackInfoResponse(BaseItemDto item, string streamUrl)
+    /// <summary>
+    /// Build PlaybackInfoResponse with multiple MediaSources for version selection.
+    /// </summary>
+    private PlaybackInfoResponse BuildPlaybackInfoResponse(BaseItemDto item, List<(string Url, string AudioType)> streamUrls)
     {
-        var mediaSourceId = item.Id.ToString("N"); // GUID without hyphens
+        var mediaSources = streamUrls.Select(s =>
+        {
+            // Generate same ID as SearchResultFactory for consistency
+            var sourceId = GenerateMediaSourceGuid(item.Id, s.AudioType);
+
+            // Display name for version selector
+            var displayName = string.IsNullOrEmpty(s.AudioType)
+                ? item.Name
+                : s.AudioType.ToUpperInvariant();
+
+            return new MediaSourceInfo
+            {
+                // Required identification
+                Id = sourceId,
+                Name = displayName,
+                Path = s.Url,
+
+                // Protocol settings for remote HLS
+                Protocol = MediaProtocol.Http,
+                Type = MediaSourceType.Default,
+                Container = "hls",
+
+                // Remote stream settings
+                IsRemote = true,
+                SupportsDirectPlay = true,
+                SupportsDirectStream = true,
+                SupportsTranscoding = false,
+                SupportsProbing = false,
+                RequiresOpening = false,
+                RequiresClosing = false,
+
+                // Runtime from item
+                RunTimeTicks = item.RunTimeTicks,
+
+                // CRITICAL: Empty list to avoid Android TV deserialization crashes
+                MediaStreams = new List<MediaStream>()
+            };
+        }).ToArray();
+
+        _logger.LogDebug("[DynamicLibrary] Built PlaybackInfoResponse with {Count} media sources", mediaSources.Length);
 
         return new PlaybackInfoResponse
         {
-            MediaSources = new[]
-            {
-                new MediaSourceInfo
-                {
-                    Id = mediaSourceId,
-                    Path = streamUrl,
-                    Name = item.Name,
-                    Protocol = MediaProtocol.Http,
-                    Type = MediaSourceType.Default,
-                    Container = "hls",
-                    IsRemote = true,
-                    SupportsDirectPlay = true,
-                    SupportsDirectStream = true,
-                    SupportsTranscoding = false,
-                    SupportsProbing = false,
-                    RequiresOpening = false,
-                    RequiresClosing = false,
-                    RunTimeTicks = item.RunTimeTicks,
-                    MediaStreams = new List<MediaStream>()
-                }
-            },
+            MediaSources = mediaSources,
             PlaySessionId = Guid.NewGuid().ToString("N")
         };
+    }
+
+    /// <summary>
+    /// Build PlaybackInfoResponse with a single MediaSource.
+    /// </summary>
+    private PlaybackInfoResponse BuildPlaybackInfoResponse(BaseItemDto item, string streamUrl)
+    {
+        return BuildPlaybackInfoResponse(item, new List<(string, string)> { (streamUrl, string.Empty) });
+    }
+
+    /// <summary>
+    /// Extract the selected mediaSourceId from the request (query string or body).
+    /// </summary>
+    private string? GetSelectedMediaSourceId(ActionExecutingContext context)
+    {
+        // Try query string first
+        if (context.HttpContext.Request.Query.TryGetValue("mediaSourceId", out var queryValue) &&
+            !string.IsNullOrEmpty(queryValue))
+        {
+            return queryValue.ToString();
+        }
+
+        // Try from action arguments (GetPostedPlaybackInfo has a playbackInfoDto parameter)
+        if (context.ActionArguments.TryGetValue("playbackInfoDto", out var playbackInfoObj) &&
+            playbackInfoObj != null)
+        {
+            // Use reflection to get MediaSourceId property
+            var mediaSourceIdProp = playbackInfoObj.GetType().GetProperty("MediaSourceId");
+            var value = mediaSourceIdProp?.GetValue(playbackInfoObj)?.ToString();
+            if (!string.IsNullOrEmpty(value))
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Find the stream URL matching the selected mediaSourceId.
+    /// </summary>
+    private (string Url, string AudioType)? FindSelectedStreamUrl(
+        List<(string Url, string AudioType)> streamUrls,
+        string selectedMediaSourceId,
+        Guid itemId)
+    {
+        foreach (var stream in streamUrls)
+        {
+            // Generate the same ID that SearchResultFactory uses
+            var sourceId = GenerateMediaSourceGuid(itemId, stream.AudioType);
+
+            if (sourceId.Equals(selectedMediaSourceId, StringComparison.OrdinalIgnoreCase))
+            {
+                return stream;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Generate a deterministic GUID for a MediaSource based on item ID and audio track.
+    /// Must match the implementation in SearchResultFactory.
+    /// </summary>
+    private static string GenerateMediaSourceGuid(Guid itemId, string audioTrack)
+    {
+        if (string.IsNullOrEmpty(audioTrack))
+        {
+            return itemId.ToString("N");
+        }
+
+        var input = $"{itemId:N}:{audioTrack.ToLowerInvariant()}";
+        using var md5 = System.Security.Cryptography.MD5.Create();
+        var hash = md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes(input));
+        return new Guid(hash).ToString("N");
     }
 }

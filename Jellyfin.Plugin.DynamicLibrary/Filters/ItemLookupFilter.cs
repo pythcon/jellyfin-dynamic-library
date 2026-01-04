@@ -80,11 +80,27 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
 
         // Check if this is a dynamic item in our cache
         var cachedItem = _itemCache.GetItem(itemId);
+        var requestedMediaSourceId = (string?)null;
+
         if (cachedItem == null)
         {
-            // Not a dynamic item, let Jellyfin handle it
-            await next();
-            return;
+            // Check if this is a MediaSource ID that maps to an episode
+            var mediaSourceIdStr = itemId.ToString("N");
+            var episodeId = _itemCache.GetEpisodeIdForMediaSource(mediaSourceIdStr);
+            if (episodeId.HasValue)
+            {
+                _logger.LogWarning("[DynamicLibrary] ItemLookup: Resolved MediaSource ID {MediaSourceId} to Episode {EpisodeId}",
+                    itemId, episodeId.Value);
+                cachedItem = _itemCache.GetItem(episodeId.Value);
+                requestedMediaSourceId = mediaSourceIdStr; // Remember which MediaSource was requested
+            }
+
+            if (cachedItem == null)
+            {
+                // Not a dynamic item, let Jellyfin handle it
+                await next();
+                return;
+            }
         }
 
         // Verify this is actually a dynamic item by checking for our provider ID
@@ -97,8 +113,30 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
             return;
         }
 
-        _logger.LogDebug("[DynamicLibrary] Returning cached dynamic item: {Name} ({Id})",
-            cachedItem.Name, itemId);
+        _logger.LogWarning("[DynamicLibrary] ItemLookup: Returning cached item: {Name} ({Id}), Type={Type}, HasMediaSources={HasSources}, MediaSourceCount={Count}",
+            cachedItem.Name, itemId, cachedItem.Type, cachedItem.MediaSources != null, cachedItem.MediaSources?.Length ?? 0);
+
+        // Log MediaSource details for episodes to debug playback issues
+        if (cachedItem.Type == BaseItemKind.Episode && cachedItem.MediaSources != null)
+        {
+            foreach (var source in cachedItem.MediaSources)
+            {
+                _logger.LogWarning("[DynamicLibrary] Episode MediaSource: Id={Id}, Name={Name}, Path={Path}, SupportsDirectPlay={DirectPlay}",
+                    source.Id, source.Name, source.Path, source.SupportsDirectPlay);
+            }
+        }
+
+        // If this was a MediaSource ID lookup, filter to only that MediaSource
+        if (!string.IsNullOrEmpty(requestedMediaSourceId) && cachedItem.MediaSources != null)
+        {
+            var selectedSource = cachedItem.MediaSources.FirstOrDefault(s => s.Id == requestedMediaSourceId);
+            if (selectedSource != null)
+            {
+                _logger.LogWarning("[DynamicLibrary] Filtering to requested MediaSource: {Name} ({Id})",
+                    selectedSource.Name, selectedSource.Id);
+                cachedItem.MediaSources = new[] { selectedSource };
+            }
+        }
 
         // Enrich with full details based on item type
         var config = DynamicLibraryPlugin.Instance?.Configuration;

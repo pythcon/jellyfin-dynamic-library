@@ -21,6 +21,7 @@ public class DynamicItemCache
     private const string SeasonsPrefix = "dynamic_seasons:";
     private const string EpisodesPrefix = "dynamic_episodes:";
     private const string EmbedarrAddedPrefix = "embedarr_added:";
+    private const string MediaSourcePrefix = "mediasource_to_episode:";
 
     public DynamicItemCache(IMemoryCache cache, ILogger<DynamicItemCache> logger)
     {
@@ -159,5 +160,27 @@ public class DynamicItemCache
     {
         var key = $"{EmbedarrAddedPrefix}{itemId}";
         return _cache.TryGetValue<bool>(key, out var added) && added;
+    }
+
+    /// <summary>
+    /// Store a mapping from MediaSource ID to Episode ID.
+    /// This allows us to resolve MediaSource IDs when the client tries to fetch them as items.
+    /// </summary>
+    public void StoreMediaSourceMapping(string mediaSourceId, Guid episodeId)
+    {
+        var key = $"{MediaSourcePrefix}{mediaSourceId}";
+        _cache.Set(key, episodeId, _cacheDuration);
+        _logger.LogDebug("[DynamicItemCache] Stored MediaSource mapping: {MediaSourceId} -> {EpisodeId}",
+            mediaSourceId, episodeId);
+    }
+
+    /// <summary>
+    /// Get the Episode ID for a MediaSource ID.
+    /// Returns null if the MediaSource ID is not in the cache.
+    /// </summary>
+    public Guid? GetEpisodeIdForMediaSource(string mediaSourceId)
+    {
+        var key = $"{MediaSourcePrefix}{mediaSourceId}";
+        return _cache.TryGetValue<Guid>(key, out var episodeId) ? episodeId : null;
     }
 }
