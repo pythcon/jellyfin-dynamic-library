@@ -192,6 +192,19 @@ public class TvdbSeriesExtended
     public string? ImdbId => RemoteIds?.FirstOrDefault(r => r.SourceName == "IMDB")?.Id;
 
     /// <summary>
+    /// Gets the AniList ID from remote IDs if available.
+    /// </summary>
+    public string? AniListId => RemoteIds?.FirstOrDefault(r =>
+        r.SourceName.Equals("AniList", StringComparison.OrdinalIgnoreCase))?.Id;
+
+    /// <summary>
+    /// Gets the MyAnimeList (MAL) ID from remote IDs if available.
+    /// </summary>
+    public string? MalId => RemoteIds?.FirstOrDefault(r =>
+        r.SourceName.Equals("MyAnimeList", StringComparison.OrdinalIgnoreCase) ||
+        r.SourceName.Equals("MAL", StringComparison.OrdinalIgnoreCase))?.Id;
+
+    /// <summary>
     /// Check if a translation is available for the given language.
     /// </summary>
     public bool HasTranslation(string languageCode)

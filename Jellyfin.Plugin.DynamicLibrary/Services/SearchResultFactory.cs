@@ -332,21 +332,63 @@ public class SearchResultFactory
         // Check if this is anime (needed for episode MediaSources and AniList lookup)
         var isAnime = DynamicLibraryService.IsAnime(dto);
 
-        // If this is anime, query AniList for the AniList ID BEFORE creating episodes
-        // (so episodes can use AniList ID in their stream URLs)
+        // If this is anime, get AniList ID using cascading lookup strategy:
+        // 1. TVDB RemoteIds (most reliable)
+        // 2. MAL ID -> AniList lookup (highly reliable)
+        // 3. Title + Year search (fallback)
         if (isAnime)
         {
-            var anilistId = await _aniListClient.SearchByTitleAsync(dto.Name ?? "", cancellationToken);
+            int? anilistId = null;
+
+            // Strategy 1: Check TVDB RemoteIds for AniList ID (most reliable - direct link)
+            if (!string.IsNullOrEmpty(details.AniListId) && int.TryParse(details.AniListId, out var tvdbAnilistId))
+            {
+                anilistId = tvdbAnilistId;
+                _logger.LogInformation("[DynamicLibrary] EnrichSeriesDto: Got AniList ID {AniListId} from TVDB RemoteIds for '{Name}'",
+                    anilistId, dto.Name);
+            }
+            // Strategy 2: Use MAL ID to lookup AniList ID (highly reliable - MAL/AniList have good linking)
+            else if (!string.IsNullOrEmpty(details.MalId) && int.TryParse(details.MalId, out var malId))
+            {
+                anilistId = await _aniListClient.SearchByMalIdAsync(malId, cancellationToken);
+                if (anilistId.HasValue)
+                {
+                    _logger.LogInformation("[DynamicLibrary] EnrichSeriesDto: Got AniList ID {AniListId} via MAL ID {MalId} for '{Name}'",
+                        anilistId, malId, dto.Name);
+                }
+                else
+                {
+                    _logger.LogDebug("[DynamicLibrary] EnrichSeriesDto: MAL ID {MalId} lookup failed for '{Name}'", malId, dto.Name);
+                }
+            }
+            // Strategy 3: Fall back to improved title search with year matching
+            else
+            {
+                anilistId = await _aniListClient.SearchByTitleAndYearAsync(dto.Name ?? "", dto.ProductionYear, cancellationToken);
+                if (anilistId.HasValue)
+                {
+                    _logger.LogInformation("[DynamicLibrary] EnrichSeriesDto: Got AniList ID {AniListId} via title+year search for '{Name}' ({Year})",
+                        anilistId, dto.Name, dto.ProductionYear);
+                }
+                else
+                {
+                    _logger.LogDebug("[DynamicLibrary] EnrichSeriesDto: Title+year search failed for '{Name}' ({Year})", dto.Name, dto.ProductionYear);
+                }
+            }
+
+            // Store AniList ID if found
             if (anilistId.HasValue)
             {
                 dto.ProviderIds ??= new Dictionary<string, string>();
                 dto.ProviderIds["AniList"] = anilistId.Value.ToString();
-                _logger.LogInformation("[DynamicLibrary] EnrichSeriesDto: Added AniList ID {AniListId} for anime '{Name}'",
-                    anilistId.Value, dto.Name);
             }
-            else
+
+            // Also store MAL ID if available from TVDB (useful for other integrations)
+            if (!string.IsNullOrEmpty(details.MalId))
             {
-                _logger.LogDebug("[DynamicLibrary] EnrichSeriesDto: No AniList ID found for anime '{Name}'", dto.Name);
+                dto.ProviderIds ??= new Dictionary<string, string>();
+                dto.ProviderIds["Mal"] = details.MalId;
+                _logger.LogDebug("[DynamicLibrary] EnrichSeriesDto: Added MAL ID {MalId} for '{Name}'", details.MalId, dto.Name);
             }
         }
 
