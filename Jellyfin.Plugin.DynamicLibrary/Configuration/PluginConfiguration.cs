@@ -143,9 +143,25 @@ public class PluginConfiguration : BasePluginConfiguration
 
     /// <summary>
     /// Gets or sets the URL template for anime streams in Direct mode.
-    /// Placeholders: {id} (preferred ID), {imdb}, {tvdb}, {anilist}, {season}, {episode}, {absolute}, {title}
+    /// Placeholders: {id} (preferred ID), {imdb}, {tvdb}, {anilist}, {season}, {episode}, {absolute}, {audio}, {title}
+    /// Use {audio} placeholder for sub/dub selection (replaced with "sub" or "dub").
     /// </summary>
     public string DirectAnimeUrlTemplate { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets whether to enable sub/dub audio version selection for anime.
+    /// When enabled, shows audio track options for anime episodes.
+    /// Requires {audio} placeholder in DirectAnimeUrlTemplate.
+    /// Default: false
+    /// </summary>
+    public bool EnableAnimeAudioVersions { get; set; } = false;
+
+    /// <summary>
+    /// Gets or sets the comma-separated list of audio track options for anime.
+    /// Each value is substituted into the {audio} placeholder in the URL template.
+    /// Default: "sub,dub"
+    /// </summary>
+    public string AnimeAudioTracks { get; set; } = "sub,dub";
 
     // ==================== Language Settings ====================
 

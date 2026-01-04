@@ -74,7 +74,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         _logger.LogDebug("[DynamicLibrary] Intercepting PlaybackInfo for dynamic item: {Name} ({Id})",
             cachedItem.Name, itemId);
 
-        // Get stream URL from Embedarr
+        // Get stream URL from Embedarr or Direct
         var streamUrl = await GetStreamUrlAsync(cachedItem, context.HttpContext.RequestAborted);
 
         if (string.IsNullOrEmpty(streamUrl))
@@ -174,7 +174,17 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             var season = item.ParentIndexNumber ?? 1;
             var episode = item.IndexNumber ?? 1;
 
-            return ReplacePlaceholders(template, item, season, episode, series);
+            // For anime with audio selection enabled, use the first configured audio track
+            string? audioType = null;
+            if (isAnime && config.EnableAnimeAudioVersions)
+            {
+                var tracks = config.AnimeAudioTracks?
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                audioType = tracks?.Length > 0 ? tracks[0] : "sub";
+                _logger.LogDebug("[DynamicLibrary] Using audio track '{AudioType}' for anime episode", audioType);
+            }
+
+            return ReplacePlaceholders(template, item, season, episode, series, audioType);
         }
 
         _logger.LogWarning("[DynamicLibrary] Unsupported item type for Direct playback: {Type}", item.Type);
@@ -184,7 +194,13 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
     /// <summary>
     /// Replace placeholders in URL template with actual values.
     /// </summary>
-    private string ReplacePlaceholders(string template, BaseItemDto item, int? season, int? episode, BaseItemDto? series = null)
+    /// <param name="template">URL template with placeholders.</param>
+    /// <param name="item">The item (movie or episode).</param>
+    /// <param name="season">Season number for episodes.</param>
+    /// <param name="episode">Episode number for episodes.</param>
+    /// <param name="series">Series for episodes (optional).</param>
+    /// <param name="audioType">Audio type for anime ("sub" or "dub"), null for default.</param>
+    private string ReplacePlaceholders(string template, BaseItemDto item, int? season, int? episode, BaseItemDto? series = null, string? audioType = null)
     {
         var config = Config;
         var providerIds = item.ProviderIds ?? new Dictionary<string, string>();
@@ -218,6 +234,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             .Replace("{season}", season?.ToString() ?? "1", StringComparison.OrdinalIgnoreCase)
             .Replace("{episode}", episode?.ToString() ?? "1", StringComparison.OrdinalIgnoreCase)
             .Replace("{absolute}", absoluteEpisode, StringComparison.OrdinalIgnoreCase)
+            .Replace("{audio}", audioType ?? "", StringComparison.OrdinalIgnoreCase)
             .Replace("{title}", Uri.EscapeDataString(item.Name ?? ""), StringComparison.OrdinalIgnoreCase);
 
         _logger.LogDebug("[DynamicLibrary] Direct URL built: {Url}", url);

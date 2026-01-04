@@ -195,6 +195,7 @@
               <code>{season}</code> - Season number<br>
               <code>{episode}</code> - Episode number<br>
               <code>{absolute}</code> - Absolute episode number (anime only)<br>
+              <code>{audio}</code> - Audio type: "sub" or "dub" (anime only, requires Sub/Dub Selection enabled)<br>
               <code>{title}</code> - URL-encoded title
             </p>
 
@@ -212,8 +213,28 @@
 
             <div class="inputContainer">
               <label class="inputLabel inputLabelUnfocused" for="txtDirectAnimeUrl">Anime URL Template:</label>
-              <input is="emby-input" type="text" id="txtDirectAnimeUrl" class="emby-input" placeholder="https://example.com/anime/{anilist}/{absolute}.m3u8" />
-              <div class="fieldDescription">Template for anime episodes. Placeholders: {id}, {imdb}, {tvdb}, {anilist}, {season}, {episode}, {absolute}, {title}</div>
+              <input is="emby-input" type="text" id="txtDirectAnimeUrl" class="emby-input" placeholder="https://example.com/anime/{anilist}/{absolute}/{audio}.m3u8" />
+              <div class="fieldDescription">Template for anime episodes. Placeholders: {id}, {imdb}, {tvdb}, {anilist}, {season}, {episode}, {absolute}, {audio}, {title}</div>
+            </div>
+
+            <div class="checkboxContainer checkboxContainer-withDescription">
+              <label>
+                <input is="emby-checkbox" type="checkbox" id="chkEnableAnimeAudioVersions" />
+                <span>Enable Audio Track Selection</span>
+              </label>
+              <div class="fieldDescription">
+                When enabled, anime episodes will show audio track options from the list below.
+                Requires <code>{audio}</code> placeholder in the anime URL template above.
+              </div>
+            </div>
+
+            <div class="inputContainer" id="animeAudioTracksContainer" style="display: none;">
+              <label class="inputLabel inputLabelUnfocused" for="txtAnimeAudioTracks">Anime Audio Tracks:</label>
+              <input is="emby-input" type="text" id="txtAnimeAudioTracks" class="emby-input" placeholder="sub,dub" />
+              <div class="fieldDescription">
+                Comma-separated list of audio options. Each value replaces <code>{audio}</code> in the URL template.
+                Example: "sub,dub" creates two options that generate URLs ending in /sub.m3u8 and /dub.m3u8
+              </div>
             </div>
           </div>
 
@@ -307,6 +328,9 @@
         const txtDirectMovieUrl = document.querySelector('#txtDirectMovieUrl');
         const txtDirectTvUrl = document.querySelector('#txtDirectTvUrl');
         const txtDirectAnimeUrl = document.querySelector('#txtDirectAnimeUrl');
+        const chkEnableAnimeAudioVersions = document.querySelector('#chkEnableAnimeAudioVersions');
+        const txtAnimeAudioTracks = document.querySelector('#txtAnimeAudioTracks');
+        const animeAudioTracksContainer = document.querySelector('#animeAudioTracksContainer');
 
         // Cache DOM elements - selects
         const selStreamProvider = document.querySelector('#selStreamProvider');
@@ -332,6 +356,10 @@
           const provider = selStreamProvider.value;
           embedarrSettings.style.display = provider === 'Embedarr' ? 'block' : 'none';
           directSettings.style.display = provider === 'Direct' ? 'block' : 'none';
+        }
+
+        function updateAnimeAudioTracksVisibility() {
+          animeAudioTracksContainer.style.display = chkEnableAnimeAudioVersions.checked ? 'block' : 'none';
         }
 
         // Helper to set select value - handles custom element timing
@@ -377,6 +405,8 @@
             txtDirectMovieUrl.value = config.DirectMovieUrlTemplate || '';
             txtDirectTvUrl.value = config.DirectTvUrlTemplate || '';
             txtDirectAnimeUrl.value = config.DirectAnimeUrlTemplate || '';
+            chkEnableAnimeAudioVersions.checked = config.EnableAnimeAudioVersions ?? false;
+            txtAnimeAudioTracks.value = config.AnimeAudioTracks || 'sub,dub';
 
             // Select dropdowns - use helper to handle custom element timing
             // Enum values come as strings from C# JSON serialization
@@ -391,6 +421,7 @@
 
             updateStreamProviderVisibility();
             updateLanguageVisibility();
+            updateAnimeAudioTracksVisibility();
           } catch (err) {
             console.error('Dynamic Library: Failed to load configuration', err);
           } finally {
@@ -424,6 +455,8 @@
             config.DirectMovieUrlTemplate = txtDirectMovieUrl.value.trim();
             config.DirectTvUrlTemplate = txtDirectTvUrl.value.trim();
             config.DirectAnimeUrlTemplate = txtDirectAnimeUrl.value.trim();
+            config.EnableAnimeAudioVersions = chkEnableAnimeAudioVersions.checked;
+            config.AnimeAudioTracks = txtAnimeAudioTracks.value.trim() || 'sub,dub';
 
             // Select dropdowns - enum values are serialized as strings
             config.StreamProvider = selStreamProvider.value;
@@ -449,6 +482,7 @@
         form.addEventListener('submit', saveConfig);
         selStreamProvider.addEventListener('change', updateStreamProviderVisibility);
         selLanguageMode.addEventListener('change', updateLanguageVisibility);
+        chkEnableAnimeAudioVersions.addEventListener('change', updateAnimeAudioTracksVisibility);
 
         // Load config when page is shown (works with Jellyfin's SPA navigation)
         page.addEventListener('viewshow', loadConfig);
