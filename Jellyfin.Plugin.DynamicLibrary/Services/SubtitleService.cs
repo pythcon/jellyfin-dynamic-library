@@ -225,7 +225,7 @@ public class SubtitleService
 
             if (string.IsNullOrEmpty(srtContent))
             {
-                _logger.LogWarning("[SubtitleService] Failed to download subtitle file: {FileId}", fileId);
+                _logger.LogInformation("[SubtitleService] Failed to download subtitle file: {FileId}", fileId);
                 continue;
             }
 
@@ -278,7 +278,7 @@ public class SubtitleService
                 return await File.ReadAllTextAsync(subtitle.FilePath, cancellationToken);
             }
 
-            _logger.LogWarning("[SubtitleService] Cached subtitle file not found on disk: {Path}", subtitle.FilePath);
+            _logger.LogInformation("[SubtitleService] Cached subtitle file not found on disk: {Path}", subtitle.FilePath);
         }
         else
         {
@@ -298,7 +298,7 @@ public class SubtitleService
             return await File.ReadAllTextAsync(expectedFilePath, cancellationToken);
         }
 
-        _logger.LogWarning("[SubtitleService] Subtitle not found in cache or on disk: {ItemId}, {Language}, ExpectedPath={Path}",
+        _logger.LogInformation("[SubtitleService] Subtitle not found in cache or on disk: {ItemId}, {Language}, ExpectedPath={Path}",
             itemId, languageCode, expectedFilePath);
         return null;
     }

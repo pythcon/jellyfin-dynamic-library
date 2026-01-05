@@ -92,7 +92,7 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
             var episodeId = _itemCache.GetEpisodeIdForMediaSource(mediaSourceIdStr);
             if (episodeId.HasValue)
             {
-                _logger.LogWarning("[DynamicLibrary] ItemLookup: Resolved MediaSource ID {MediaSourceId} to Episode {EpisodeId}",
+                _logger.LogDebug("[DynamicLibrary] ItemLookup: Resolved MediaSource ID {MediaSourceId} to Episode {EpisodeId}",
                     itemId, episodeId.Value);
                 cachedItem = _itemCache.GetItem(episodeId.Value);
                 requestedMediaSourceId = mediaSourceIdStr; // Remember which MediaSource was requested
@@ -116,7 +116,7 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
             return;
         }
 
-        _logger.LogWarning("[DynamicLibrary] ItemLookup: Returning cached item: {Name} ({Id}), Type={Type}, HasMediaSources={HasSources}, MediaSourceCount={Count}",
+        _logger.LogDebug("[DynamicLibrary] ItemLookup: Returning cached item: {Name} ({Id}), Type={Type}, HasMediaSources={HasSources}, MediaSourceCount={Count}",
             cachedItem.Name, itemId, cachedItem.Type, cachedItem.MediaSources != null, cachedItem.MediaSources?.Length ?? 0);
 
         // Log MediaSource details for episodes to debug playback issues
@@ -124,7 +124,7 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
         {
             foreach (var source in cachedItem.MediaSources)
             {
-                _logger.LogWarning("[DynamicLibrary] Episode MediaSource: Id={Id}, Name={Name}, Path={Path}, SupportsDirectPlay={DirectPlay}",
+                _logger.LogDebug("[DynamicLibrary] Episode MediaSource: Id={Id}, Name={Name}, Path={Path}, SupportsDirectPlay={DirectPlay}",
                     source.Id, source.Name, source.Path, source.SupportsDirectPlay);
             }
         }
@@ -135,7 +135,7 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
             var selectedSource = cachedItem.MediaSources.FirstOrDefault(s => s.Id == requestedMediaSourceId);
             if (selectedSource != null)
             {
-                _logger.LogWarning("[DynamicLibrary] Filtering to requested MediaSource: {Name} ({Id})",
+                _logger.LogDebug("[DynamicLibrary] Filtering to requested MediaSource: {Name} ({Id})",
                     selectedSource.Name, selectedSource.Id);
                 cachedItem.MediaSources = new[] { selectedSource };
             }

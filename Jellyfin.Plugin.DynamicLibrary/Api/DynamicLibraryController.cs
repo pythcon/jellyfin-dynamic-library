@@ -51,7 +51,7 @@ public class DynamicLibraryController : ControllerBase
         var item = _itemCache.GetItem(itemId);
         if (item == null)
         {
-            _logger.LogWarning("[DynamicLibrary] Item not found in cache: {ItemId}", itemId);
+            _logger.LogDebug("[DynamicLibrary] Item not found in cache: {ItemId}", itemId);
             return NotFound();
         }
 
@@ -72,7 +72,7 @@ public class DynamicLibraryController : ControllerBase
         var imageUrl = _itemCache.GetImageUrl(itemId);
         if (string.IsNullOrEmpty(imageUrl))
         {
-            _logger.LogWarning("[DynamicLibrary] No image URL for item: {ItemId}", itemId);
+            _logger.LogDebug("[DynamicLibrary] No image URL for item: {ItemId}", itemId);
             return NotFound();
         }
 
@@ -83,7 +83,7 @@ public class DynamicLibraryController : ControllerBase
 
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("[DynamicLibrary] Failed to fetch image from {Url}: {Status}",
+                _logger.LogInformation("[DynamicLibrary] Failed to fetch image from {Url}: {Status}",
                     imageUrl, response.StatusCode);
                 return NotFound();
             }
@@ -114,7 +114,7 @@ public class DynamicLibraryController : ControllerBase
         var content = await _subtitleService.GetSubtitleContentAsync(itemId, languageCode, cancellationToken);
         if (content == null)
         {
-            _logger.LogWarning("[DynamicLibrary] Subtitle not found: {ItemId}, {Language}", itemId, languageCode);
+            _logger.LogInformation("[DynamicLibrary] Subtitle not found: {ItemId}, {Language}", itemId, languageCode);
             return NotFound();
         }
 
@@ -139,7 +139,7 @@ public class DynamicLibraryController : ControllerBase
         var content = await _subtitleService.GetSubtitleContentAsync(itemId, languageCode, cancellationToken);
         if (content == null)
         {
-            _logger.LogWarning("[DynamicLibrary] Subtitle not found: {ItemId}, {Language}", itemId, languageCode);
+            _logger.LogInformation("[DynamicLibrary] Subtitle not found: {ItemId}, {Language}", itemId, languageCode);
             return NotFound();
         }
 
@@ -177,7 +177,7 @@ public class DynamicLibraryController : ControllerBase
         var item = _itemCache.GetItem(itemId);
         if (item == null)
         {
-            _logger.LogWarning("[DynamicLibrary] Item not found in cache for persistence: {ItemId}", itemId);
+            _logger.LogDebug("[DynamicLibrary] Item not found in cache for persistence: {ItemId}", itemId);
             return NotFound(new { Error = "Item not found in cache" });
         }
 

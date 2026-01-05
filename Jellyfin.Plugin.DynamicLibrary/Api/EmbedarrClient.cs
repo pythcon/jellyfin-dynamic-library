@@ -69,7 +69,7 @@ public class EmbedarrClient : IEmbedarrClient
     {
         if (!IsConfigured)
         {
-            _logger.LogWarning("Embedarr is not configured");
+            _logger.LogDebug("Embedarr is not configured");
             return new EmbedarrResponse
             {
                 Success = false,
@@ -118,7 +118,7 @@ public class EmbedarrClient : IEmbedarrClient
     {
         if (!IsConfigured)
         {
-            _logger.LogWarning("Embedarr is not configured");
+            _logger.LogDebug("Embedarr is not configured");
             return new EmbedarrResponse
             {
                 Success = false,
@@ -167,7 +167,7 @@ public class EmbedarrClient : IEmbedarrClient
     {
         if (!IsConfigured)
         {
-            _logger.LogWarning("Embedarr is not configured");
+            _logger.LogDebug("Embedarr is not configured");
             return new EmbedarrResponse
             {
                 Success = false,
@@ -216,7 +216,7 @@ public class EmbedarrClient : IEmbedarrClient
     {
         if (!IsConfigured)
         {
-            _logger.LogWarning("Embedarr is not configured");
+            _logger.LogDebug("Embedarr is not configured");
             return null;
         }
 
@@ -251,7 +251,7 @@ public class EmbedarrClient : IEmbedarrClient
     {
         if (!IsConfigured)
         {
-            _logger.LogWarning("Embedarr is not configured");
+            _logger.LogDebug("Embedarr is not configured");
             return null;
         }
 
@@ -286,7 +286,7 @@ public class EmbedarrClient : IEmbedarrClient
     {
         if (!IsConfigured)
         {
-            _logger.LogWarning("Embedarr is not configured");
+            _logger.LogDebug("Embedarr is not configured");
             return null;
         }
 

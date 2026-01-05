@@ -50,7 +50,7 @@ public class RequestLoggerFilter : IAsyncActionFilter, IOrderedFilter
                 return $"{kv.Key}={value}";
             }));
 
-            _logger.LogWarning("[DynamicLibrary:Request] {Controller}/{Action} Args=[{Args}] Path={Path}",
+            _logger.LogDebug("[DynamicLibrary:Request] {Controller}/{Action} Args=[{Args}] Path={Path}",
                 controllerName,
                 actionName,
                 args,

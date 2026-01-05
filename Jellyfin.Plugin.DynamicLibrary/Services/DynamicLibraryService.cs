@@ -50,7 +50,7 @@ public class DynamicLibraryService
     {
         var config = Config;
         var pluginInstance = DynamicLibraryPlugin.Instance;
-        logger.LogWarning(
+        logger.LogInformation(
             "[DynamicLibrary] Status: PluginInstance={Instance}, ConfigEnabled={Enabled}, TvdbConfigured={Tvdb}, TmdbConfigured={Tmdb}",
             pluginInstance != null ? "exists" : "NULL",
             config.Enabled,
@@ -231,7 +231,7 @@ public class DynamicLibraryService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[DynamicLibrary] Error getting existing provider IDs for {Provider}", providerName);
+            _logger.LogError(ex, "[DynamicLibrary] Error getting existing provider IDs for {Provider}", providerName);
         }
 
         return ids;

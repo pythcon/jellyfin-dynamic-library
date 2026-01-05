@@ -644,8 +644,8 @@ public class SearchResultFactory
         // Add MediaSources for version selector (sub/dub) on item details page
         var config = DynamicLibraryPlugin.Instance?.Configuration;
 
-        // Log the conditions for debugging (WRN level so it's visible)
-        _logger.LogWarning("[DynamicLibrary] CreateEpisodeDto '{Name}': isAnime={IsAnime}, EnableAudioVersions={EnableAudio}, StreamProvider={Provider}",
+        // Log the conditions for debugging
+        _logger.LogDebug("[DynamicLibrary] CreateEpisodeDto '{Name}': isAnime={IsAnime}, EnableAudioVersions={EnableAudio}, StreamProvider={Provider}",
             dto.Name, isAnime, config?.EnableAnimeAudioVersions, config?.StreamProvider);
 
         if (isAnime && config?.EnableAnimeAudioVersions == true && config.StreamProvider == StreamProvider.Direct)
@@ -672,7 +672,7 @@ public class SearchResultFactory
                     // Store mapping so we can resolve MediaSource ID -> Episode ID later
                     _itemCache.StoreMediaSourceMapping(sourceId, dto.Id);
 
-                    _logger.LogWarning("[DynamicLibrary] Built stream URL for '{Name}' ({Track}): {Url}, SourceId={SourceId}",
+                    _logger.LogDebug("[DynamicLibrary] Built stream URL for '{Name}' ({Track}): {Url}, SourceId={SourceId}",
                         dto.Name, track, streamUrl, sourceId);
 
                     return new MediaSourceInfo
@@ -693,13 +693,13 @@ public class SearchResultFactory
                     };
                 }).ToArray();
 
-                _logger.LogWarning("[DynamicLibrary] Added {Count} MediaSources to episode '{Name}': {Tracks}",
+                _logger.LogDebug("[DynamicLibrary] Added {Count} MediaSources to episode '{Name}': {Tracks}",
                     audioTracks.Length, dto.Name, string.Join(", ", audioTracks));
             }
         }
         else
         {
-            _logger.LogWarning("[DynamicLibrary] NOT adding MediaSources to episode '{Name}' - conditions not met", dto.Name);
+            _logger.LogDebug("[DynamicLibrary] NOT adding MediaSources to episode '{Name}' - conditions not met", dto.Name);
         }
 
         // Store in cache AFTER MediaSources are added
@@ -727,7 +727,7 @@ public class SearchResultFactory
     {
         if (string.IsNullOrEmpty(template))
         {
-            _logger.LogWarning("[DynamicLibrary] DirectAnimeUrlTemplate is empty");
+            _logger.LogInformation("[DynamicLibrary] DirectAnimeUrlTemplate is empty");
             return string.Empty;
         }
 

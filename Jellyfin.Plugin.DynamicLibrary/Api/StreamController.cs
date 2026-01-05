@@ -44,7 +44,7 @@ public class StreamController : ControllerBase
         var movie = FindItemByProviderId<Movie>("Imdb", imdbId);
         if (movie == null)
         {
-            _logger.LogWarning("[DynamicLibrary] Movie not found with IMDB ID: {ImdbId}", imdbId);
+            _logger.LogInformation("[DynamicLibrary] Movie not found with IMDB ID: {ImdbId}", imdbId);
             return NotFound($"Movie not found: {imdbId}");
         }
 
@@ -52,7 +52,7 @@ public class StreamController : ControllerBase
         var streamUrl = BuildMovieStreamUrl(movie);
         if (string.IsNullOrEmpty(streamUrl))
         {
-            _logger.LogWarning("[DynamicLibrary] No stream URL template configured for movies");
+            _logger.LogInformation("[DynamicLibrary] No stream URL template configured for movies");
             return BadRequest("No movie stream URL template configured");
         }
 
@@ -79,7 +79,7 @@ public class StreamController : ControllerBase
         var series = FindItemByProviderId<Series>("Imdb", imdbId);
         if (series == null)
         {
-            _logger.LogWarning("[DynamicLibrary] Series not found with IMDB ID: {ImdbId}", imdbId);
+            _logger.LogInformation("[DynamicLibrary] Series not found with IMDB ID: {ImdbId}", imdbId);
             return NotFound($"Series not found: {imdbId}");
         }
 
@@ -87,7 +87,7 @@ public class StreamController : ControllerBase
         var episodeItem = FindEpisode(series, season, episode);
         if (episodeItem == null)
         {
-            _logger.LogWarning("[DynamicLibrary] Episode not found: {Series} S{Season}E{Episode}",
+            _logger.LogInformation("[DynamicLibrary] Episode not found: {Series} S{Season}E{Episode}",
                 series.Name, season, episode);
             return NotFound($"Episode not found: S{season}E{episode}");
         }
@@ -96,7 +96,7 @@ public class StreamController : ControllerBase
         var streamUrl = BuildTvStreamUrl(episodeItem, series, season, episode);
         if (string.IsNullOrEmpty(streamUrl))
         {
-            _logger.LogWarning("[DynamicLibrary] No stream URL template configured for TV");
+            _logger.LogInformation("[DynamicLibrary] No stream URL template configured for TV");
             return BadRequest("No TV stream URL template configured");
         }
 
@@ -124,7 +124,7 @@ public class StreamController : ControllerBase
         var series = FindItemByProviderId<Series>("AniList", anilistId);
         if (series == null)
         {
-            _logger.LogWarning("[DynamicLibrary] Anime not found with AniList ID: {AnilistId}", anilistId);
+            _logger.LogInformation("[DynamicLibrary] Anime not found with AniList ID: {AnilistId}", anilistId);
             return NotFound($"Anime not found: {anilistId}");
         }
 
@@ -132,7 +132,7 @@ public class StreamController : ControllerBase
         var episodeItem = FindEpisode(series, 1, episode);
         if (episodeItem == null)
         {
-            _logger.LogWarning("[DynamicLibrary] Anime episode not found: {Series} E{Episode}",
+            _logger.LogInformation("[DynamicLibrary] Anime episode not found: {Series} E{Episode}",
                 series.Name, episode);
             return NotFound($"Episode not found: E{episode}");
         }
@@ -141,7 +141,7 @@ public class StreamController : ControllerBase
         var streamUrl = BuildAnimeStreamUrl(episodeItem, series, episode, audio);
         if (string.IsNullOrEmpty(streamUrl))
         {
-            _logger.LogWarning("[DynamicLibrary] No stream URL template configured for anime");
+            _logger.LogInformation("[DynamicLibrary] No stream URL template configured for anime");
             return BadRequest("No anime stream URL template configured");
         }
 

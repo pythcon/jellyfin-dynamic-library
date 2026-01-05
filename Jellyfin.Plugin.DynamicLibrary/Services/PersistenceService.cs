@@ -40,7 +40,7 @@ public class PersistenceService
     {
         if (movie.Type != BaseItemKind.Movie)
         {
-            _logger.LogWarning("[PersistenceService] Item is not a movie: {Name} ({Type})", movie.Name, movie.Type);
+            _logger.LogDebug("[PersistenceService] Item is not a movie: {Name} ({Type})", movie.Name, movie.Type);
             return null;
         }
 
@@ -87,7 +87,7 @@ public class PersistenceService
     {
         if (series.Type != BaseItemKind.Series)
         {
-            _logger.LogWarning("[PersistenceService] Item is not a series: {Name} ({Type})", series.Name, series.Type);
+            _logger.LogDebug("[PersistenceService] Item is not a series: {Name} ({Type})", series.Name, series.Type);
             return null;
         }
 
@@ -111,7 +111,7 @@ public class PersistenceService
         var episodes = _itemCache.GetEpisodesForSeries(series.Id);
         if (episodes == null || episodes.Count == 0)
         {
-            _logger.LogWarning("[PersistenceService] No episodes found for series: {Name}", series.Name);
+            _logger.LogInformation("[PersistenceService] No episodes found for series: {Name}", series.Name);
             return null;
         }
 

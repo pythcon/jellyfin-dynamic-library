@@ -45,7 +45,7 @@ public class TvdbClient : ITvdbClient
         var apiKey = GetApiKey();
         if (string.IsNullOrEmpty(apiKey))
         {
-            _logger.LogWarning("TVDB API key is not configured");
+            _logger.LogDebug("TVDB API key is not configured");
             return null;
         }
 

@@ -203,7 +203,7 @@ public class SeasonEpisodeFilter : IAsyncActionFilter, IOrderedFilter
 
         // Log MediaSources info for first episode
         var firstEp = episodes.FirstOrDefault();
-        _logger.LogWarning("[DynamicLibrary] Returning {Count} cached episodes for dynamic series {Id} (season: {Season}). First episode '{Name}' HasMediaSources={HasSources}, Count={SourceCount}",
+        _logger.LogDebug("[DynamicLibrary] Returning {Count} cached episodes for dynamic series {Id} (season: {Season}). First episode '{Name}' HasMediaSources={HasSources}, Count={SourceCount}",
             episodes.Count, seriesId, seasonNumber?.ToString() ?? "all",
             firstEp?.Name ?? "N/A", firstEp?.MediaSources != null, firstEp?.MediaSources?.Length ?? 0);
 

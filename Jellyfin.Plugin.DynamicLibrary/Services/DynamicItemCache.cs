@@ -38,7 +38,7 @@ public class DynamicItemCache
     {
         if (item.Id == Guid.Empty)
         {
-            _logger.LogWarning("[DynamicItemCache] Attempted to store item with empty GUID");
+            _logger.LogDebug("[DynamicItemCache] Attempted to store item with empty GUID");
             return;
         }
 

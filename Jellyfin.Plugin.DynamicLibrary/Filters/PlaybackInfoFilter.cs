@@ -73,6 +73,8 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             return;
         }
 
+        _logger.LogWarning("[DynamicLibrary] PlaybackInfoFilter: Processing PlaybackInfo for item {ItemId}", itemId);
+
         // Check if this is a dynamic item in cache
         var cachedItem = _itemCache.GetItem(itemId);
 
@@ -80,27 +82,70 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         if (cachedItem == null)
         {
             var libraryItem = _libraryManager.GetItemById(itemId);
-            if (libraryItem != null && IsDynamicLibraryPath(libraryItem.Path))
-            {
-                _logger.LogWarning("[DynamicLibrary] PlaybackInfo: Found persisted item {Name} with path {Path}",
-                    libraryItem.Name, libraryItem.Path);
-                var persistedStreamUrl = BuildStreamUrlFromPath(libraryItem.Path);
-                if (!string.IsNullOrEmpty(persistedStreamUrl))
-                {
-                    // Fetch subtitles for persisted items
-                    List<CachedSubtitle>? subtitles = null;
-                    if (_subtitleService.IsEnabled)
-                    {
-                        subtitles = await FetchSubtitlesForPersistedItemAsync(libraryItem, context.HttpContext.RequestAborted);
-                        _logger.LogDebug("[DynamicLibrary] Fetched {Count} subtitles for persisted item {Name}",
-                            subtitles?.Count ?? 0, libraryItem.Name);
-                    }
+            _logger.LogWarning("[DynamicLibrary] PlaybackInfoFilter: Item not in cache. LibraryItem={Found}, Path={Path}",
+                libraryItem != null, libraryItem?.Path ?? "null");
 
-                    var response = BuildPlaybackInfoResponseFromPath(libraryItem, persistedStreamUrl, subtitles);
-                    context.Result = new OkObjectResult(response);
-                    return;
+            if (libraryItem != null)
+            {
+                // Check if it's a .strm file - need to read contents to get the actual URL
+                string? dynamicLibraryUrl = null;
+
+                if (libraryItem.Path?.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    // Read .strm file contents to get the actual URL
+                    try
+                    {
+                        if (File.Exists(libraryItem.Path))
+                        {
+                            var strmContents = File.ReadAllText(libraryItem.Path).Trim();
+                            _logger.LogWarning("[DynamicLibrary] PlaybackInfoFilter: Read .strm contents: {Contents}", strmContents);
+                            if (IsDynamicLibraryPath(strmContents))
+                            {
+                                dynamicLibraryUrl = strmContents;
+                            }
+                        }
+                        else
+                        {
+                            _logger.LogWarning("[DynamicLibrary] PlaybackInfoFilter: .strm file does not exist: {Path}", libraryItem.Path);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "[DynamicLibrary] Failed to read .strm file: {Path}", libraryItem.Path);
+                    }
                 }
-                _logger.LogWarning("[DynamicLibrary] PlaybackInfo: Could not build stream URL from path {Path}", libraryItem.Path);
+                else if (IsDynamicLibraryPath(libraryItem.Path))
+                {
+                    // Direct dynamiclibrary:// path (shouldn't happen but handle it)
+                    dynamicLibraryUrl = libraryItem.Path;
+                }
+
+                if (!string.IsNullOrEmpty(dynamicLibraryUrl))
+                {
+                    _logger.LogWarning("[DynamicLibrary] PlaybackInfo: Found persisted item {Name} with dynamicLibraryUrl {Url}",
+                        libraryItem.Name, dynamicLibraryUrl);
+                    var persistedStreamUrl = BuildStreamUrlFromPath(dynamicLibraryUrl);
+                    if (!string.IsNullOrEmpty(persistedStreamUrl))
+                    {
+                        // Fetch subtitles for persisted items
+                        List<CachedSubtitle>? subtitles = null;
+                        if (_subtitleService.IsEnabled)
+                        {
+                            subtitles = await FetchSubtitlesForPersistedItemAsync(libraryItem, context.HttpContext.RequestAborted);
+                            _logger.LogDebug("[DynamicLibrary] Fetched {Count} subtitles for persisted item {Name}",
+                                subtitles?.Count ?? 0, libraryItem.Name);
+                        }
+
+                        var response = BuildPlaybackInfoResponseFromPath(libraryItem, persistedStreamUrl, subtitles);
+                        _logger.LogWarning("[DynamicLibrary] PlaybackInfoFilter: Returning response with URL={Url}, DirectPlay={DirectPlay}, DirectStream={DirectStream}",
+                            persistedStreamUrl,
+                            response.MediaSources?.FirstOrDefault()?.SupportsDirectPlay,
+                            response.MediaSources?.FirstOrDefault()?.SupportsDirectStream);
+                        context.Result = new OkObjectResult(response);
+                        return;
+                    }
+                    _logger.LogInformation("[DynamicLibrary] PlaybackInfo: Could not build stream URL from path {Path}", dynamicLibraryUrl);
+                }
             }
 
             await next();
@@ -126,7 +171,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
 
             if (streamUrls.Count == 0)
             {
-                _logger.LogWarning("[DynamicLibrary] No stream URLs available for {Name}, playback may fail", cachedItem.Name);
+                _logger.LogInformation("[DynamicLibrary] No stream URLs available for {Name}, playback may fail", cachedItem.Name);
                 await next();
                 return;
             }
@@ -145,13 +190,13 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                 var selectedUrl = FindSelectedStreamUrl(streamUrls, selectedMediaSourceId, cachedItem.Id);
                 if (selectedUrl.HasValue)
                 {
-                    _logger.LogWarning("[DynamicLibrary] PlaybackInfo: Matched version '{AudioType}' for {Name}, URL={Url}",
+                    _logger.LogDebug("[DynamicLibrary] PlaybackInfo: Matched version '{AudioType}' for {Name}, URL={Url}",
                         selectedUrl.Value.AudioType, cachedItem.Name, selectedUrl.Value.Url);
                     var response = BuildPlaybackInfoResponse(cachedItem, new List<(string, string)> { selectedUrl.Value }, subtitles);
                     context.Result = new OkObjectResult(response);
                     return;
                 }
-                _logger.LogWarning("[DynamicLibrary] Selected mediaSourceId '{Id}' not found, returning all sources", selectedMediaSourceId);
+                _logger.LogDebug("[DynamicLibrary] Selected mediaSourceId '{Id}' not found, returning all sources", selectedMediaSourceId);
             }
 
             _logger.LogDebug("[DynamicLibrary] Got {Count} stream URL(s) for {Name}", streamUrls.Count, cachedItem.Name);
@@ -166,7 +211,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
 
         if (string.IsNullOrEmpty(streamUrl))
         {
-            _logger.LogWarning("[DynamicLibrary] No stream URL available for {Name}, playback may fail", cachedItem.Name);
+            _logger.LogInformation("[DynamicLibrary] No stream URL available for {Name}, playback may fail", cachedItem.Name);
             await next();
             return;
         }
@@ -197,7 +242,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                 return BuildDirectStreamUrl(item);
 
             default:
-                _logger.LogWarning("[DynamicLibrary] Unknown stream provider: {Provider}", config.StreamProvider);
+                _logger.LogError("[DynamicLibrary] Unknown stream provider: {Provider}", config.StreamProvider);
                 return null;
         }
     }
@@ -217,7 +262,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             return await GetEpisodeStreamUrlAsync(item, cancellationToken);
         }
 
-        _logger.LogWarning("[DynamicLibrary] Unsupported item type for playback: {Type}", item.Type);
+        _logger.LogError("[DynamicLibrary] Unsupported item type for playback: {Type}", item.Type);
         return null;
     }
 
@@ -248,7 +293,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             var template = isAnime ? config.DirectAnimeUrlTemplate : config.DirectTvUrlTemplate;
             if (string.IsNullOrEmpty(template))
             {
-                _logger.LogWarning("[DynamicLibrary] Direct {Type} URL template is not configured",
+                _logger.LogInformation("[DynamicLibrary] Direct {Type} URL template is not configured",
                     isAnime ? "anime" : "TV");
                 return urls;
             }
@@ -300,7 +345,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             template = config.DirectMovieUrlTemplate;
             if (string.IsNullOrEmpty(template))
             {
-                _logger.LogWarning("[DynamicLibrary] Direct movie URL template is not configured");
+                _logger.LogInformation("[DynamicLibrary] Direct movie URL template is not configured");
                 return null;
             }
 
@@ -316,7 +361,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             template = isAnime ? config.DirectAnimeUrlTemplate : config.DirectTvUrlTemplate;
             if (string.IsNullOrEmpty(template))
             {
-                _logger.LogWarning("[DynamicLibrary] Direct {Type} URL template is not configured",
+                _logger.LogInformation("[DynamicLibrary] Direct {Type} URL template is not configured",
                     isAnime ? "anime" : "TV");
                 return null;
             }
@@ -337,7 +382,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             return ReplacePlaceholders(template, item, season, episode, series, audioType);
         }
 
-        _logger.LogWarning("[DynamicLibrary] Unsupported item type for Direct playback: {Type}", item.Type);
+        _logger.LogError("[DynamicLibrary] Unsupported item type for Direct playback: {Type}", item.Type);
         return null;
     }
 
@@ -408,7 +453,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
 
         if (string.IsNullOrEmpty(id))
         {
-            _logger.LogWarning("[DynamicLibrary] No suitable ID found for movie: {Name}", item.Name);
+            _logger.LogInformation("[DynamicLibrary] No suitable ID found for movie: {Name}", item.Name);
             return null;
         }
 
@@ -445,7 +490,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
 
         if (string.IsNullOrEmpty(id))
         {
-            _logger.LogWarning("[DynamicLibrary] No suitable ID found for episode: {Name} (isAnime={IsAnime})", item.Name, isAnime);
+            _logger.LogInformation("[DynamicLibrary] No suitable ID found for episode: {Name} (isAnime={IsAnime})", item.Name, isAnime);
             return null;
         }
 
@@ -455,11 +500,11 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         // Warn if using fallback values
         if (!item.ParentIndexNumber.HasValue)
         {
-            _logger.LogWarning("[DynamicLibrary] Episode {Name} has no season number, defaulting to 1", item.Name);
+            _logger.LogInformation("[DynamicLibrary] Episode {Name} has no season number, defaulting to 1", item.Name);
         }
         if (!item.IndexNumber.HasValue)
         {
-            _logger.LogWarning("[DynamicLibrary] Episode {Name} has no episode number, defaulting to 1", item.Name);
+            _logger.LogInformation("[DynamicLibrary] Episode {Name} has no episode number, defaulting to 1", item.Name);
         }
 
         _logger.LogDebug("[DynamicLibrary] Calling Embedarr: GET /api/url/tv/{Id}/{Season}/{Episode} (IdType={IdType}, IsAnime={IsAnime})",
@@ -638,10 +683,11 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                 Type = MediaSourceType.Default,
                 Container = "hls",
 
-                // Remote stream settings
+                // Remote stream settings - DirectStream must be false to prevent
+                // Jellyfin from using the database Path (dynamiclibrary://) with FFmpeg
                 IsRemote = true,
                 SupportsDirectPlay = true,
-                SupportsDirectStream = true,
+                SupportsDirectStream = false,
                 SupportsTranscoding = false,
                 SupportsProbing = false,
                 RequiresOpening = false,
@@ -827,10 +873,11 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             Type = MediaSourceType.Default,
             Container = "hls",
 
-            // Remote stream settings
+            // Remote stream settings - DirectStream must be false to prevent
+            // Jellyfin from using the database Path (dynamiclibrary://) with FFmpeg
             IsRemote = true,
             SupportsDirectPlay = true,
-            SupportsDirectStream = true,
+            SupportsDirectStream = false,
             SupportsTranscoding = false,
             SupportsProbing = false,
             RequiresOpening = false,
