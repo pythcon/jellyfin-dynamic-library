@@ -339,6 +339,59 @@
           </div>
 
           <div class="verticalSection">
+            <h3 class="sectionTitle">Persistence Settings</h3>
+            <p class="fieldDescription" style="margin-bottom: 1em;">
+              When enabled, clicking on a dynamic item will create .strm files in the specified folder.
+              These become real Jellyfin library items with playback tracking, favorites, and ratings.
+            </p>
+
+            <div class="checkboxContainer checkboxContainer-withDescription">
+              <label>
+                <input is="emby-checkbox" type="checkbox" id="chkEnablePersistence" />
+                <span>Enable Persistence</span>
+              </label>
+              <div class="fieldDescription">
+                When enabled, clicking on a dynamic item will save it to your library as a .strm file.
+              </div>
+            </div>
+
+            <div id="persistenceSettings" style="display: none;">
+              <div class="inputContainer">
+                <label class="inputLabel inputLabelUnfocused" for="txtPersistentLibraryPath">Library Path:</label>
+                <input is="emby-input" type="text" id="txtPersistentLibraryPath" class="emby-input" placeholder="/dynamic-library" />
+                <div class="fieldDescription">
+                  Root folder for persistent items. This folder must exist and be writable by Jellyfin.
+                </div>
+              </div>
+
+              <div style="background: #1a1a1a; border: 1px solid #333; border-radius: 4px; padding: 1em; margin: 1em 0;">
+                <h4 style="margin: 0 0 0.5em 0; color: #00a4dc;">Required Jellyfin Libraries</h4>
+                <p style="margin: 0 0 0.5em 0; color: #999; font-size: 0.9em;">
+                  Add these folders as Jellyfin libraries (Dashboard → Libraries → Add):
+                </p>
+                <ul id="libraryPathsList" style="margin: 0; padding-left: 1.5em; color: #ccc; font-family: monospace; font-size: 0.9em;">
+                  <li><strong>Movies:</strong> <span id="moviesPath">/dynamic-library/movies</span></li>
+                  <li><strong>TV Shows:</strong> <span id="showsPath">/dynamic-library/tv</span></li>
+                  <li><strong>Anime:</strong> <span id="animePath">/dynamic-library/anime</span></li>
+                </ul>
+                <p style="margin: 0.5em 0 0 0; color: #888; font-size: 0.85em;">
+                  Tip: You can also add a single Mixed Content library pointing to the root path.
+                </p>
+              </div>
+
+              <div class="checkboxContainer checkboxContainer-withDescription">
+                <label>
+                  <input is="emby-checkbox" type="checkbox" id="chkTriggerLibraryScan" />
+                  <span>Trigger Library Scan</span>
+                </label>
+                <div class="fieldDescription">
+                  Automatically trigger a library scan after creating new items.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="verticalSection">
             <h3 class="sectionTitle">Cache Settings</h3>
 
             <div class="inputContainer">
@@ -392,6 +445,15 @@
         const chkUseJellyfinOSCredentials = document.querySelector('#chkUseJellyfinOSCredentials');
         const subtitleSettingsContainer = document.querySelector('#subtitleSettings');
 
+        // Cache DOM elements - persistence settings
+        const chkEnablePersistence = document.querySelector('#chkEnablePersistence');
+        const txtPersistentLibraryPath = document.querySelector('#txtPersistentLibraryPath');
+        const chkTriggerLibraryScan = document.querySelector('#chkTriggerLibraryScan');
+        const persistenceSettingsContainer = document.querySelector('#persistenceSettings');
+        const moviesPathSpan = document.querySelector('#moviesPath');
+        const showsPathSpan = document.querySelector('#showsPath');
+        const animePathSpan = document.querySelector('#animePath');
+
         // Cache DOM elements - selects
         const selStreamProvider = document.querySelector('#selStreamProvider');
         const selMovieApiSource = document.querySelector('#selMovieApiSource');
@@ -424,6 +486,22 @@
 
         function updateSubtitleSettingsVisibility() {
           subtitleSettingsContainer.style.display = chkEnableSubtitles.checked ? 'block' : 'none';
+        }
+
+        function updatePersistenceSettingsVisibility() {
+          persistenceSettingsContainer.style.display = chkEnablePersistence.checked ? 'block' : 'none';
+          if (chkEnablePersistence.checked) {
+            updateLibraryPaths();
+          }
+        }
+
+        function updateLibraryPaths() {
+          var basePath = txtPersistentLibraryPath.value.trim() || '/dynamic-library';
+          // Remove trailing slash if present
+          basePath = basePath.replace(/\/+$/, '');
+          moviesPathSpan.textContent = basePath + '/movies';
+          showsPathSpan.textContent = basePath + '/tv';
+          animePathSpan.textContent = basePath + '/anime';
         }
 
         // Helper to set select value - handles custom element timing
@@ -479,6 +557,11 @@
             txtSubtitleCachePath.value = config.SubtitleCachePath || '/tmp/jellyfin-dynamiclibrary-subtitles';
             chkUseJellyfinOSCredentials.checked = config.UseJellyfinOpenSubtitlesCredentials ?? true;
 
+            // Persistence settings
+            chkEnablePersistence.checked = config.EnablePersistence ?? false;
+            txtPersistentLibraryPath.value = config.PersistentLibraryPath || '/dynamic-library';
+            chkTriggerLibraryScan.checked = config.TriggerLibraryScan ?? true;
+
             // Select dropdowns - use helper to handle custom element timing
             // Enum values come as strings from C# JSON serialization
             setSelectValue(selStreamProvider, config.StreamProvider || 'None');
@@ -494,6 +577,8 @@
             updateLanguageVisibility();
             updateAnimeAudioTracksVisibility();
             updateSubtitleSettingsVisibility();
+            updatePersistenceSettingsVisibility();
+            updateLibraryPaths();
           } catch (err) {
             console.error('Dynamic Library: Failed to load configuration', err);
           } finally {
@@ -537,6 +622,11 @@
             config.SubtitleCachePath = txtSubtitleCachePath.value.trim() || '/tmp/jellyfin-dynamiclibrary-subtitles';
             config.UseJellyfinOpenSubtitlesCredentials = chkUseJellyfinOSCredentials.checked;
 
+            // Persistence settings
+            config.EnablePersistence = chkEnablePersistence.checked;
+            config.PersistentLibraryPath = txtPersistentLibraryPath.value.trim() || '/dynamic-library';
+            config.TriggerLibraryScan = chkTriggerLibraryScan.checked;
+
             // Select dropdowns - enum values are serialized as strings
             config.StreamProvider = selStreamProvider.value;
             config.MovieApiSource = selMovieApiSource.value;
@@ -563,6 +653,8 @@
         selLanguageMode.addEventListener('change', updateLanguageVisibility);
         chkEnableAnimeAudioVersions.addEventListener('change', updateAnimeAudioTracksVisibility);
         chkEnableSubtitles.addEventListener('change', updateSubtitleSettingsVisibility);
+        chkEnablePersistence.addEventListener('change', updatePersistenceSettingsVisibility);
+        txtPersistentLibraryPath.addEventListener('input', updateLibraryPaths);
 
         // Load config when page is shown (works with Jellyfin's SPA navigation)
         page.addEventListener('viewshow', loadConfig);

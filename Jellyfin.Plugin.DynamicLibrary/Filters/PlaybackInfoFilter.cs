@@ -4,6 +4,8 @@ using Jellyfin.Plugin.DynamicLibrary.Api;
 using Jellyfin.Plugin.DynamicLibrary.Configuration;
 using Jellyfin.Plugin.DynamicLibrary.Models;
 using Jellyfin.Plugin.DynamicLibrary.Services;
+using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
@@ -24,6 +26,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
     private readonly DynamicItemCache _itemCache;
     private readonly IEmbedarrClient _embedarrClient;
     private readonly SubtitleService _subtitleService;
+    private readonly ILibraryManager _libraryManager;
     private readonly ILogger<PlaybackInfoFilter> _logger;
 
     private static readonly HashSet<string> PlaybackInfoActions = new(StringComparer.OrdinalIgnoreCase)
@@ -36,11 +39,13 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         DynamicItemCache itemCache,
         IEmbedarrClient embedarrClient,
         SubtitleService subtitleService,
+        ILibraryManager libraryManager,
         ILogger<PlaybackInfoFilter> logger)
     {
         _itemCache = itemCache;
         _embedarrClient = embedarrClient;
         _subtitleService = subtitleService;
+        _libraryManager = libraryManager;
         _logger = logger;
     }
 
@@ -68,10 +73,36 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             return;
         }
 
-        // Check if this is a dynamic item
+        // Check if this is a dynamic item in cache
         var cachedItem = _itemCache.GetItem(itemId);
+
+        // If not in cache, check if it's a persisted DynamicLibrary item
         if (cachedItem == null)
         {
+            var libraryItem = _libraryManager.GetItemById(itemId);
+            if (libraryItem != null && IsDynamicLibraryPath(libraryItem.Path))
+            {
+                _logger.LogWarning("[DynamicLibrary] PlaybackInfo: Found persisted item {Name} with path {Path}",
+                    libraryItem.Name, libraryItem.Path);
+                var persistedStreamUrl = BuildStreamUrlFromPath(libraryItem.Path);
+                if (!string.IsNullOrEmpty(persistedStreamUrl))
+                {
+                    // Fetch subtitles for persisted items
+                    List<CachedSubtitle>? subtitles = null;
+                    if (_subtitleService.IsEnabled)
+                    {
+                        subtitles = await FetchSubtitlesForPersistedItemAsync(libraryItem, context.HttpContext.RequestAborted);
+                        _logger.LogDebug("[DynamicLibrary] Fetched {Count} subtitles for persisted item {Name}",
+                            subtitles?.Count ?? 0, libraryItem.Name);
+                    }
+
+                    var response = BuildPlaybackInfoResponseFromPath(libraryItem, persistedStreamUrl, subtitles);
+                    context.Result = new OkObjectResult(response);
+                    return;
+                }
+                _logger.LogWarning("[DynamicLibrary] PlaybackInfo: Could not build stream URL from path {Path}", libraryItem.Path);
+            }
+
             await next();
             return;
         }
@@ -707,5 +738,143 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         using var md5 = System.Security.Cryptography.MD5.Create();
         var hash = md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes(input));
         return new Guid(hash).ToString("N");
+    }
+
+    /// <summary>
+    /// Check if the item path is a DynamicLibrary placeholder URL.
+    /// </summary>
+    private static bool IsDynamicLibraryPath(string? path)
+    {
+        return path?.StartsWith("dynamiclibrary://", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    /// <summary>
+    /// Parse a DynamicLibrary placeholder URL and build the actual stream URL.
+    /// Format: dynamiclibrary://movie/{id}
+    ///         dynamiclibrary://tv/{id}/{season}/{episode}
+    ///         dynamiclibrary://anime/{id}/{episode}/{audio}
+    /// </summary>
+    private string? BuildStreamUrlFromPath(string path)
+    {
+        try
+        {
+            var uri = new Uri(path);
+            var type = uri.Host; // "movie", "tv", or "anime"
+            var segments = uri.AbsolutePath.Trim('/').Split('/');
+
+            var config = Config;
+
+            if (type.Equals("movie", StringComparison.OrdinalIgnoreCase) && segments.Length >= 1)
+            {
+                var template = config.DirectMovieUrlTemplate;
+                if (string.IsNullOrEmpty(template)) return null;
+
+                return template
+                    .Replace("{id}", segments[0], StringComparison.OrdinalIgnoreCase)
+                    .Replace("{imdb}", segments[0], StringComparison.OrdinalIgnoreCase)
+                    .Replace("{tmdb}", segments[0], StringComparison.OrdinalIgnoreCase);
+            }
+            else if (type.Equals("tv", StringComparison.OrdinalIgnoreCase) && segments.Length >= 3)
+            {
+                var template = config.DirectTvUrlTemplate;
+                if (string.IsNullOrEmpty(template)) return null;
+
+                return template
+                    .Replace("{id}", segments[0], StringComparison.OrdinalIgnoreCase)
+                    .Replace("{imdb}", segments[0], StringComparison.OrdinalIgnoreCase)
+                    .Replace("{tvdb}", segments[0], StringComparison.OrdinalIgnoreCase)
+                    .Replace("{season}", segments[1], StringComparison.OrdinalIgnoreCase)
+                    .Replace("{episode}", segments[2], StringComparison.OrdinalIgnoreCase);
+            }
+            else if (type.Equals("anime", StringComparison.OrdinalIgnoreCase) && segments.Length >= 2)
+            {
+                var template = config.DirectAnimeUrlTemplate;
+                if (string.IsNullOrEmpty(template)) return null;
+
+                var audio = segments.Length > 2 ? segments[2] : "sub";
+                return template
+                    .Replace("{id}", segments[0], StringComparison.OrdinalIgnoreCase)
+                    .Replace("{anilist}", segments[0], StringComparison.OrdinalIgnoreCase)
+                    .Replace("{episode}", segments[1], StringComparison.OrdinalIgnoreCase)
+                    .Replace("{audio}", audio, StringComparison.OrdinalIgnoreCase);
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[DynamicLibrary] Error parsing DynamicLibrary path: {Path}", path);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Build PlaybackInfoResponse for a persisted library item with a stream URL.
+    /// </summary>
+    private PlaybackInfoResponse BuildPlaybackInfoResponseFromPath(BaseItem item, string streamUrl, List<CachedSubtitle>? subtitles)
+    {
+        // Build subtitle streams
+        var subtitleStreams = BuildSubtitleMediaStreams(item.Id, item.Id.ToString("N"), subtitles);
+
+        var mediaSource = new MediaSourceInfo
+        {
+            Id = item.Id.ToString("N"),
+            Name = item.Name,
+            Path = streamUrl,
+
+            // Protocol settings for remote HLS
+            Protocol = MediaProtocol.Http,
+            Type = MediaSourceType.Default,
+            Container = "hls",
+
+            // Remote stream settings
+            IsRemote = true,
+            SupportsDirectPlay = true,
+            SupportsDirectStream = true,
+            SupportsTranscoding = false,
+            SupportsProbing = false,
+            RequiresOpening = false,
+            RequiresClosing = false,
+
+            // Runtime from item
+            RunTimeTicks = item.RunTimeTicks,
+
+            // Include subtitle streams
+            MediaStreams = subtitleStreams.Count > 0 ? subtitleStreams : new List<MediaStream>()
+        };
+
+        _logger.LogDebug("[DynamicLibrary] Built PlaybackInfoResponse for persisted item {Name} with URL {Url}, {SubCount} subtitles",
+            item.Name, streamUrl, subtitleStreams.Count);
+
+        return new PlaybackInfoResponse
+        {
+            MediaSources = new[] { mediaSource },
+            PlaySessionId = Guid.NewGuid().ToString("N")
+        };
+    }
+
+    /// <summary>
+    /// Fetch subtitles for a persisted library item by converting it to a BaseItemDto format.
+    /// </summary>
+    private async Task<List<CachedSubtitle>> FetchSubtitlesForPersistedItemAsync(BaseItem item, CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Create a minimal DTO with required provider IDs for subtitle lookup
+            var dto = new BaseItemDto
+            {
+                Id = item.Id,
+                Name = item.Name,
+                Type = item.GetBaseItemKind(),
+                ProviderIds = item.ProviderIds
+            };
+
+            return await FetchSubtitlesAsync(dto, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[DynamicLibrary] Error fetching subtitles for persisted item {Name}", item.Name);
+            return new List<CachedSubtitle>();
+        }
     }
 }

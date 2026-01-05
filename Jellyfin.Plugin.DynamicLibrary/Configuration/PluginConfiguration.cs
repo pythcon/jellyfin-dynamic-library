@@ -302,4 +302,25 @@ public class PluginConfiguration : BasePluginConfiguration
     /// Gets or sets the path for caching downloaded subtitle files.
     /// </summary>
     public string SubtitleCachePath { get; set; } = "/tmp/jellyfin-dynamiclibrary-subtitles";
+
+    // ==================== Persistence Settings ====================
+
+    /// <summary>
+    /// Gets or sets whether to enable persistent library items.
+    /// When enabled, clicking on a dynamic item will create .strm files
+    /// that become real Jellyfin library items with playback tracking.
+    /// </summary>
+    public bool EnablePersistence { get; set; } = false;
+
+    /// <summary>
+    /// Gets or sets the root folder path for persistent library items.
+    /// This folder should be added as a Jellyfin library.
+    /// </summary>
+    public string PersistentLibraryPath { get; set; } = "/dynamic-library";
+
+    /// <summary>
+    /// Gets or sets whether to trigger a library scan after creating new items.
+    /// When enabled, Jellyfin will automatically scan for new content.
+    /// </summary>
+    public bool TriggerLibraryScan { get; set; } = true;
 }

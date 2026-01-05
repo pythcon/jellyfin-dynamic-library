@@ -12,13 +12,14 @@ namespace Jellyfin.Plugin.DynamicLibrary.Filters;
 /// <summary>
 /// Filter that intercepts item lookup requests and returns cached data
 /// for dynamic (virtual) items that don't exist in Jellyfin's database.
-/// Also triggers Embedarr to add items to the library when user views item details.
+/// Also triggers Embedarr/Persistence to add items to the library when user views item details.
 /// </summary>
 public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
 {
     private readonly DynamicItemCache _itemCache;
     private readonly SearchResultFactory _searchResultFactory;
     private readonly DynamicLibraryService _dynamicLibraryService;
+    private readonly PersistenceService _persistenceService;
     private readonly ILogger<ItemLookupFilter> _logger;
 
     // Action names that look up individual items
@@ -43,11 +44,13 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
         DynamicItemCache itemCache,
         SearchResultFactory searchResultFactory,
         DynamicLibraryService dynamicLibraryService,
+        PersistenceService persistenceService,
         ILogger<ItemLookupFilter> logger)
     {
         _itemCache = itemCache;
         _searchResultFactory = searchResultFactory;
         _dynamicLibraryService = dynamicLibraryService;
+        _persistenceService = persistenceService;
         _logger = logger;
     }
 
@@ -142,6 +145,7 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
         var config = DynamicLibraryPlugin.Instance?.Configuration;
         var shouldTriggerEmbedarr = config?.CreateMediaOnView == true &&
                                     config?.StreamProvider == StreamProvider.Embedarr;
+        var shouldTriggerPersistence = config?.EnablePersistence == true;
 
         if (cachedItem.Type == BaseItemKind.Movie)
         {
@@ -151,6 +155,11 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
             {
                 _ = TriggerEmbedarrAsync(cachedItem);
             }
+            // Trigger persistence in background (fire-and-forget) to create .strm files - if enabled
+            if (shouldTriggerPersistence)
+            {
+                _ = TriggerPersistenceAsync(cachedItem);
+            }
         }
         else if (cachedItem.Type == BaseItemKind.Series)
         {
@@ -159,6 +168,11 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
             if (shouldTriggerEmbedarr)
             {
                 _ = TriggerEmbedarrAsync(cachedItem);
+            }
+            // Trigger persistence in background (fire-and-forget) to create .strm files - if enabled
+            if (shouldTriggerPersistence)
+            {
+                _ = TriggerPersistenceAsync(cachedItem);
             }
         }
 
@@ -199,6 +213,53 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[DynamicLibrary] Error triggering Embedarr for {Name}", item.Name);
+        }
+    }
+
+    /// <summary>
+    /// Trigger persistence to create .strm files for the item in the background.
+    /// This ensures the item is added to the Jellyfin library when user views item details.
+    /// </summary>
+    private async Task TriggerPersistenceAsync(BaseItemDto item)
+    {
+        try
+        {
+            // Skip if already persisted
+            if (_itemCache.IsAddedToEmbedarr(item.Id)) // Reuse the "added" tracking
+            {
+                _logger.LogDebug("[DynamicLibrary] Item {Name} already persisted, skipping", item.Name);
+                return;
+            }
+
+            _logger.LogInformation("[DynamicLibrary] Triggering persistence for: {Name} ({Id})", item.Name, item.Id);
+
+            string? createdPath = null;
+
+            if (item.Type == BaseItemKind.Movie)
+            {
+                createdPath = await _persistenceService.PersistMovieAsync(item);
+            }
+            else if (item.Type == BaseItemKind.Series)
+            {
+                createdPath = await _persistenceService.PersistSeriesAsync(item);
+            }
+
+            if (!string.IsNullOrEmpty(createdPath))
+            {
+                _itemCache.MarkAddedToEmbedarr(item.Id); // Reuse the tracking to prevent re-persistence
+                _logger.LogInformation("[DynamicLibrary] Successfully persisted {Name} to: {Path}", item.Name, createdPath);
+
+                // Trigger library scan if configured
+                _persistenceService.TriggerLibraryScan();
+            }
+            else
+            {
+                _logger.LogDebug("[DynamicLibrary] Item {Name} was not persisted (already exists or failed)", item.Name);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[DynamicLibrary] Error triggering persistence for {Name}", item.Name);
         }
     }
 }

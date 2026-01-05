@@ -34,6 +34,7 @@ public class ServiceRegistrator : IPluginServiceRegistrator
         services.AddSingleton<SearchResultFactory>();
         services.AddSingleton<DynamicLibraryService>();
         services.AddSingleton<SubtitleService>();
+        services.AddSingleton<PersistenceService>();
 
         // Register filters
         services.AddSingleton<RequestLoggerFilter>();
