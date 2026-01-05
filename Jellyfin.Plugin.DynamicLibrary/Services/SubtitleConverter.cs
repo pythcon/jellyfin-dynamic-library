@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace Jellyfin.Plugin.DynamicLibrary.Services;
@@ -10,6 +11,9 @@ public static partial class SubtitleConverter
 {
     [GeneratedRegex(@"(\d{2}:\d{2}:\d{2}),(\d{3})", RegexOptions.Compiled)]
     private static partial Regex SrtTimestampRegex();
+
+    [GeneratedRegex(@"(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}\.\d{3})[^\n]*\n([\s\S]*?)(?=\n\n|\n*$)", RegexOptions.Compiled)]
+    private static partial Regex VttCueRegex();
 
     /// <summary>
     /// Convert SRT subtitle content to WebVTT format.
@@ -138,5 +142,90 @@ public static partial class SubtitleConverter
             "vi" => "Vietnamese",
             _ => languageCode.ToUpperInvariant()
         };
+    }
+
+    /// <summary>
+    /// Convert WebVTT content to Jellyfin TrackEvents JSON format.
+    /// Used when player requests .js format for custom subtitle rendering.
+    /// </summary>
+    /// <param name="vttContent">The WebVTT content to convert.</param>
+    /// <returns>JSON string with TrackEvents array.</returns>
+    public static string WebVttToTrackEvents(string vttContent)
+    {
+        var trackEvents = new List<TrackEvent>();
+
+        if (string.IsNullOrEmpty(vttContent))
+        {
+            return JsonSerializer.Serialize(new { TrackEvents = trackEvents });
+        }
+
+        // Normalize line endings
+        var content = vttContent.Replace("\r\n", "\n").Replace("\r", "\n");
+
+        var id = 1;
+        foreach (Match match in VttCueRegex().Matches(content))
+        {
+            var startTicks = ParseVttTimestamp(match.Groups[1].Value);
+            var endTicks = ParseVttTimestamp(match.Groups[2].Value);
+            var text = match.Groups[3].Value.Trim();
+
+            // Skip empty cues
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                continue;
+            }
+
+            trackEvents.Add(new TrackEvent
+            {
+                Id = id.ToString(),
+                Text = text,
+                StartPositionTicks = startTicks,
+                EndPositionTicks = endTicks
+            });
+            id++;
+        }
+
+        return JsonSerializer.Serialize(new { TrackEvents = trackEvents });
+    }
+
+    /// <summary>
+    /// Parse VTT timestamp to ticks (100-nanosecond units).
+    /// Format: HH:MM:SS.mmm
+    /// </summary>
+    private static long ParseVttTimestamp(string timestamp)
+    {
+        var parts = timestamp.Split(':');
+        if (parts.Length != 3)
+        {
+            return 0;
+        }
+
+        if (!int.TryParse(parts[0], out var hours) ||
+            !int.TryParse(parts[1], out var minutes))
+        {
+            return 0;
+        }
+
+        var secondsParts = parts[2].Split('.');
+        if (secondsParts.Length != 2 ||
+            !int.TryParse(secondsParts[0], out var seconds) ||
+            !int.TryParse(secondsParts[1], out var milliseconds))
+        {
+            return 0;
+        }
+
+        var totalMs = ((hours * 3600L) + (minutes * 60L) + seconds) * 1000L + milliseconds;
+        return totalMs * 10000L;  // Convert to ticks (10,000 ticks = 1ms)
+    }
+
+    /// <summary>
+    /// TrackEvent for Jellyfin JSON subtitle format.
+    /// </summary>
+    private sealed class TrackEvent
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Text { get; set; } = string.Empty;
+        public long StartPositionTicks { get; set; }
+        public long EndPositionTicks { get; set; }
     }
 }

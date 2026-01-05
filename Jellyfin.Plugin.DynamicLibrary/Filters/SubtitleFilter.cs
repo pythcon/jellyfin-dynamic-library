@@ -80,8 +80,15 @@ public class SubtitleFilter : IAsyncActionFilter, IOrderedFilter
             subtitleIndex = altIndex;
         }
 
-        _logger.LogDebug("[DynamicLibrary] SubtitleFilter: Intercepting subtitle request for dynamic item {ItemId}, index {Index}",
-            itemId, subtitleIndex);
+        // Get requested format (vtt, js, etc.)
+        var format = "vtt";
+        if (context.ActionArguments.TryGetValue("routeFormat", out var formatObj) && formatObj is string requestedFormat)
+        {
+            format = requestedFormat.ToLowerInvariant();
+        }
+
+        _logger.LogDebug("[DynamicLibrary] SubtitleFilter: Intercepting subtitle request for dynamic item {ItemId}, index {Index}, format {Format}",
+            itemId, subtitleIndex, format);
 
         // Get cached subtitles
         var subtitles = _itemCache.GetSubtitles(itemId);
@@ -94,7 +101,7 @@ public class SubtitleFilter : IAsyncActionFilter, IOrderedFilter
 
         var subtitle = subtitles[subtitleIndex];
 
-        // Get subtitle content
+        // Get subtitle content (WebVTT)
         var content = await _subtitleService.GetSubtitleContentAsync(itemId, subtitle.LanguageCode, context.HttpContext.RequestAborted);
         if (string.IsNullOrEmpty(content))
         {
@@ -103,15 +110,30 @@ public class SubtitleFilter : IAsyncActionFilter, IOrderedFilter
             return;
         }
 
-        _logger.LogDebug("[DynamicLibrary] SubtitleFilter: Serving subtitle {Language} for item {ItemId}, length={Length}",
-            subtitle.LanguageCode, itemId, content.Length);
+        _logger.LogDebug("[DynamicLibrary] SubtitleFilter: Serving subtitle {Language} for item {ItemId}, format={Format}, length={Length}",
+            subtitle.LanguageCode, itemId, format, content.Length);
 
-        // Return WebVTT content
-        context.Result = new ContentResult
+        // Return appropriate format based on request
+        if (format == "js")
         {
-            Content = content,
-            ContentType = "text/vtt; charset=utf-8",
-            StatusCode = 200
-        };
+            // Convert WebVTT to TrackEvents JSON for custom rendering
+            var trackEventsJson = SubtitleConverter.WebVttToTrackEvents(content);
+            context.Result = new ContentResult
+            {
+                Content = trackEventsJson,
+                ContentType = "application/json; charset=utf-8",
+                StatusCode = 200
+            };
+        }
+        else
+        {
+            // Return WebVTT content
+            context.Result = new ContentResult
+            {
+                Content = content,
+                ContentType = "text/vtt; charset=utf-8",
+                StatusCode = 200
+            };
+        }
     }
 }

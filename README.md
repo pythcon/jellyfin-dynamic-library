@@ -176,25 +176,6 @@ Virtual items use deterministic GUIDs generated from a unique prefix (`jellyfin-
 
 ## Known Limitations
 
-### Safari Subtitle Display Issue
-
-**Problem:**  
-Subtitles may not display correctly in Safari/WebKit browsers and can produce an error such as:  
-`SyntaxError: The string did not match the expected pattern`.
-
-**Cause:**  
-Safari/WebKit has known limitations and bugs when handling **dynamically added text tracks**, particularly for external subtitles injected via JavaScript. While Safari implements the `addTextTrack()` and `VTTCue` APIs, its WebVTT parsing and cue handling are stricter and less consistent than other browsers.
-
-The Jellyfin web player relies on these APIs to render external subtitles during playback. This approach works in Chrome, Firefox, and Jellyfin’s native apps (Android TV, iOS, etc.), but can fail in Safari due to WebKit’s incomplete or buggy subtitle handling.
-
-**Workaround:**  
-Use a different browser (Chrome or Firefox) or a native Jellyfin client (Android TV, iOS, Apple TV, etc.), where subtitles render correctly.
-
-**Status:**  
-This is a browser-side limitation and cannot be resolved server-side. Addressing this would require Safari-specific handling in the Jellyfin web client, such as loading subtitles via native `<track>` elements instead of dynamically injected cues.
-
-### Other Limitations
-
 - Virtual items are ephemeral and exist only in memory cache
 - Playback requires a configured stream provider (Embedarr or Direct URLs)
 - Some metadata may be incomplete depending on API availability

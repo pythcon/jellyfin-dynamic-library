@@ -99,7 +99,7 @@ public class DynamicLibraryController : ControllerBase
     [HttpGet("Subtitles/{itemId}/{languageCode}.vtt")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> GetSubtitle(
+    public async Task<IActionResult> GetSubtitleVtt(
         [FromRoute] Guid itemId,
         [FromRoute] string languageCode,
         CancellationToken cancellationToken)
@@ -111,9 +111,37 @@ public class DynamicLibraryController : ControllerBase
             return NotFound();
         }
 
-        _logger.LogDebug("[DynamicLibrary] Serving subtitle: {ItemId}, {Language}, ContentLength={Length}",
+        _logger.LogDebug("[DynamicLibrary] Serving VTT subtitle: {ItemId}, {Language}, ContentLength={Length}",
             itemId, languageCode, content.Length);
 
         return Content(content, "text/vtt", Encoding.UTF8);
+    }
+
+    /// <summary>
+    /// Get subtitle for a dynamic item in JSON TrackEvents format.
+    /// Used by Jellyfin web player for custom subtitle rendering.
+    /// </summary>
+    [HttpGet("Subtitles/{itemId}/{languageCode}.js")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetSubtitleJs(
+        [FromRoute] Guid itemId,
+        [FromRoute] string languageCode,
+        CancellationToken cancellationToken)
+    {
+        var content = await _subtitleService.GetSubtitleContentAsync(itemId, languageCode, cancellationToken);
+        if (content == null)
+        {
+            _logger.LogWarning("[DynamicLibrary] Subtitle not found: {ItemId}, {Language}", itemId, languageCode);
+            return NotFound();
+        }
+
+        // Convert WebVTT to TrackEvents JSON
+        var trackEventsJson = SubtitleConverter.WebVttToTrackEvents(content);
+
+        _logger.LogDebug("[DynamicLibrary] Serving JS subtitle: {ItemId}, {Language}, ContentLength={Length}",
+            itemId, languageCode, trackEventsJson.Length);
+
+        return Content(trackEventsJson, "application/json", Encoding.UTF8);
     }
 }
