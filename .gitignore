@@ -37,5 +37,7 @@ Thumbs.db
 
 # Project specific
 CLAUDE.md
+BUILD-PLAN.md
+PERSISTENT-MEDIA-PLAN.md
 jellyfin-test/
 install-plugin.sh
