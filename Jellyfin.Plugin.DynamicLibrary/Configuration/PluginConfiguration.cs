@@ -273,4 +273,33 @@ public class PluginConfiguration : BasePluginConfiguration
 
         return PreferredLanguage;
     }
+
+    // ==================== Subtitle Settings ====================
+
+    /// <summary>
+    /// Gets or sets whether to enable automatic subtitle fetching from OpenSubtitles.
+    /// </summary>
+    public bool EnableSubtitles { get; set; } = false;
+
+    /// <summary>
+    /// Gets or sets the OpenSubtitles API key.
+    /// Get one at https://www.opensubtitles.com/consumers
+    /// </summary>
+    public string OpenSubtitlesApiKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the preferred subtitle languages (comma-separated ISO 639-1 codes).
+    /// Example: "en,es,fr"
+    /// </summary>
+    public string SubtitleLanguages { get; set; } = "en";
+
+    /// <summary>
+    /// Gets or sets whether to use credentials from Jellyfin's OpenSubtitles plugin.
+    /// </summary>
+    public bool UseJellyfinOpenSubtitlesCredentials { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets the path for caching downloaded subtitle files.
+    /// </summary>
+    public string SubtitleCachePath { get; set; } = "/tmp/jellyfin-dynamiclibrary-subtitles";
 }

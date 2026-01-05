@@ -2,7 +2,9 @@ using System.Linq;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.DynamicLibrary.Api;
 using Jellyfin.Plugin.DynamicLibrary.Configuration;
+using Jellyfin.Plugin.DynamicLibrary.Models;
 using Jellyfin.Plugin.DynamicLibrary.Services;
+using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.MediaInfo;
@@ -21,6 +23,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
 {
     private readonly DynamicItemCache _itemCache;
     private readonly IEmbedarrClient _embedarrClient;
+    private readonly SubtitleService _subtitleService;
     private readonly ILogger<PlaybackInfoFilter> _logger;
 
     private static readonly HashSet<string> PlaybackInfoActions = new(StringComparer.OrdinalIgnoreCase)
@@ -32,10 +35,12 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
     public PlaybackInfoFilter(
         DynamicItemCache itemCache,
         IEmbedarrClient embedarrClient,
+        SubtitleService subtitleService,
         ILogger<PlaybackInfoFilter> logger)
     {
         _itemCache = itemCache;
         _embedarrClient = embedarrClient;
+        _subtitleService = subtitleService;
         _logger = logger;
     }
 
@@ -95,6 +100,14 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                 return;
             }
 
+            // Fetch subtitles if enabled
+            List<CachedSubtitle>? subtitles = null;
+            if (_subtitleService.IsEnabled)
+            {
+                subtitles = await FetchSubtitlesAsync(cachedItem, context.HttpContext.RequestAborted);
+                _logger.LogDebug("[DynamicLibrary] Fetched {Count} subtitles for {Name}", subtitles?.Count ?? 0, cachedItem.Name);
+            }
+
             // If a specific mediaSource was selected, filter to just that one
             if (!string.IsNullOrEmpty(selectedMediaSourceId) && streamUrls.Count > 1)
             {
@@ -103,7 +116,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                 {
                     _logger.LogWarning("[DynamicLibrary] PlaybackInfo: Matched version '{AudioType}' for {Name}, URL={Url}",
                         selectedUrl.Value.AudioType, cachedItem.Name, selectedUrl.Value.Url);
-                    var response = BuildPlaybackInfoResponse(cachedItem, new List<(string, string)> { selectedUrl.Value });
+                    var response = BuildPlaybackInfoResponse(cachedItem, new List<(string, string)> { selectedUrl.Value }, subtitles);
                     context.Result = new OkObjectResult(response);
                     return;
                 }
@@ -112,7 +125,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
 
             _logger.LogDebug("[DynamicLibrary] Got {Count} stream URL(s) for {Name}", streamUrls.Count, cachedItem.Name);
 
-            var allSourcesResponse = BuildPlaybackInfoResponse(cachedItem, streamUrls);
+            var allSourcesResponse = BuildPlaybackInfoResponse(cachedItem, streamUrls, subtitles);
             context.Result = new OkObjectResult(allSourcesResponse);
             return;
         }
@@ -495,14 +508,87 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
     }
 
     /// <summary>
+    /// Fetch subtitles for an item based on its type.
+    /// </summary>
+    private async Task<List<CachedSubtitle>> FetchSubtitlesAsync(BaseItemDto item, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (item.Type == BaseItemKind.Movie)
+            {
+                return await _subtitleService.FetchMovieSubtitlesAsync(item, cancellationToken);
+            }
+
+            if (item.Type == BaseItemKind.Episode)
+            {
+                var series = item.SeriesId.HasValue ? _itemCache.GetItem(item.SeriesId.Value) : null;
+                return await _subtitleService.FetchEpisodeSubtitlesAsync(item, series, cancellationToken);
+            }
+
+            return new List<CachedSubtitle>();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[DynamicLibrary] Error fetching subtitles for {Name}", item.Name);
+            return new List<CachedSubtitle>();
+        }
+    }
+
+    /// <summary>
+    /// Build subtitle MediaStreams from cached subtitles.
+    /// Uses Jellyfin's standard subtitle URL format so our SubtitleFilter can intercept.
+    /// </summary>
+    private List<MediaStream> BuildSubtitleMediaStreams(Guid itemId, string mediaSourceId, List<CachedSubtitle>? subtitles)
+    {
+        var mediaStreams = new List<MediaStream>();
+
+        if (subtitles == null || subtitles.Count == 0)
+        {
+            return mediaStreams;
+        }
+
+        var subtitleIndex = 0;
+
+        foreach (var subtitle in subtitles)
+        {
+            // Use our custom DynamicLibrary endpoint for subtitles
+            var deliveryUrl = $"/DynamicLibrary/Subtitles/{itemId}/{subtitle.LanguageCode}.vtt";
+
+            _logger.LogDebug("[DynamicLibrary] Building subtitle stream: Index={Index}, Language={Language}",
+                subtitleIndex, subtitle.LanguageCode);
+
+            mediaStreams.Add(new MediaStream
+            {
+                Type = MediaStreamType.Subtitle,
+                Index = subtitleIndex++,
+                Codec = "webvtt",
+                Language = subtitle.LanguageCode,
+                Title = subtitle.Language + (subtitle.HearingImpaired ? " [CC]" : ""),
+                IsExternal = true,
+                SupportsExternalStream = true,
+                DeliveryMethod = SubtitleDeliveryMethod.External,
+                DeliveryUrl = deliveryUrl
+            });
+        }
+
+        _logger.LogDebug("[DynamicLibrary] Built {Count} subtitle streams for item {ItemId}",
+            mediaStreams.Count, itemId);
+
+        return mediaStreams;
+    }
+
+    /// <summary>
     /// Build PlaybackInfoResponse with multiple MediaSources for version selection.
     /// </summary>
-    private PlaybackInfoResponse BuildPlaybackInfoResponse(BaseItemDto item, List<(string Url, string AudioType)> streamUrls)
+    private PlaybackInfoResponse BuildPlaybackInfoResponse(BaseItemDto item, List<(string Url, string AudioType)> streamUrls, List<CachedSubtitle>? subtitles = null)
     {
         var mediaSources = streamUrls.Select(s =>
         {
             // Generate same ID as SearchResultFactory for consistency
             var sourceId = GenerateMediaSourceGuid(item.Id, s.AudioType);
+
+            // Build subtitle streams with the correct mediaSourceId for this source
+            var subtitleStreams = BuildSubtitleMediaStreams(item.Id, sourceId, subtitles);
 
             // Display name for version selector
             var displayName = string.IsNullOrEmpty(s.AudioType)
@@ -533,12 +619,13 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                 // Runtime from item
                 RunTimeTicks = item.RunTimeTicks,
 
-                // CRITICAL: Empty list to avoid Android TV deserialization crashes
-                MediaStreams = new List<MediaStream>()
+                // Include subtitle streams (or empty list if none)
+                MediaStreams = subtitleStreams.Count > 0 ? subtitleStreams : new List<MediaStream>()
             };
         }).ToArray();
 
-        _logger.LogDebug("[DynamicLibrary] Built PlaybackInfoResponse with {Count} media sources", mediaSources.Length);
+        _logger.LogDebug("[DynamicLibrary] Built PlaybackInfoResponse with {Count} media sources",
+            mediaSources.Length);
 
         return new PlaybackInfoResponse
         {
@@ -552,7 +639,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
     /// </summary>
     private PlaybackInfoResponse BuildPlaybackInfoResponse(BaseItemDto item, string streamUrl)
     {
-        return BuildPlaybackInfoResponse(item, new List<(string, string)> { (streamUrl, string.Empty) });
+        return BuildPlaybackInfoResponse(item, new List<(string, string)> { (streamUrl, string.Empty) }, null);
     }
 
     /// <summary>

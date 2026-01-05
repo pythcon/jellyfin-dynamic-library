@@ -287,6 +287,58 @@
           </div>
 
           <div class="verticalSection">
+            <h3 class="sectionTitle">Subtitle Settings</h3>
+
+            <div class="checkboxContainer checkboxContainer-withDescription">
+              <label>
+                <input is="emby-checkbox" type="checkbox" id="chkEnableSubtitles" />
+                <span>Enable Automatic Subtitles</span>
+              </label>
+              <div class="fieldDescription">
+                Automatically fetch subtitles from OpenSubtitles.com for dynamic items during playback.
+              </div>
+            </div>
+
+            <div id="subtitleSettings" style="display: none;">
+              <div class="inputContainer">
+                <label class="inputLabel inputLabelUnfocused" for="txtOpenSubtitlesApiKey">OpenSubtitles API Key:</label>
+                <input is="emby-input" type="password" id="txtOpenSubtitlesApiKey" class="emby-input" />
+                <div class="fieldDescription">
+                  API key from <a href="https://www.opensubtitles.com/consumers" target="_blank">opensubtitles.com</a>.
+                  Required for subtitle fetching.
+                </div>
+              </div>
+
+              <div class="inputContainer">
+                <label class="inputLabel inputLabelUnfocused" for="txtSubtitleLanguages">Preferred Languages:</label>
+                <input is="emby-input" type="text" id="txtSubtitleLanguages" class="emby-input" placeholder="en,es,fr" />
+                <div class="fieldDescription">
+                  Comma-separated ISO 639-1 language codes (e.g., en, es, fr, de, ja).
+                  Subtitles will be fetched for each language if available.
+                </div>
+              </div>
+
+              <div class="inputContainer">
+                <label class="inputLabel inputLabelUnfocused" for="txtSubtitleCachePath">Subtitle Cache Path:</label>
+                <input is="emby-input" type="text" id="txtSubtitleCachePath" class="emby-input" placeholder="/tmp/jellyfin-dynamiclibrary-subtitles" />
+                <div class="fieldDescription">
+                  Directory where downloaded subtitle files are cached.
+                </div>
+              </div>
+
+              <div class="checkboxContainer checkboxContainer-withDescription">
+                <label>
+                  <input is="emby-checkbox" type="checkbox" id="chkUseJellyfinOSCredentials" />
+                  <span>Use Jellyfin OpenSubtitles Plugin Credentials</span>
+                </label>
+                <div class="fieldDescription">
+                  If enabled, will attempt to read credentials from the Jellyfin OpenSubtitles plugin for authentication.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="verticalSection">
             <h3 class="sectionTitle">Cache Settings</h3>
 
             <div class="inputContainer">
@@ -332,6 +384,14 @@
         const txtAnimeAudioTracks = document.querySelector('#txtAnimeAudioTracks');
         const animeAudioTracksContainer = document.querySelector('#animeAudioTracksContainer');
 
+        // Cache DOM elements - subtitle settings
+        const chkEnableSubtitles = document.querySelector('#chkEnableSubtitles');
+        const txtOpenSubtitlesApiKey = document.querySelector('#txtOpenSubtitlesApiKey');
+        const txtSubtitleLanguages = document.querySelector('#txtSubtitleLanguages');
+        const txtSubtitleCachePath = document.querySelector('#txtSubtitleCachePath');
+        const chkUseJellyfinOSCredentials = document.querySelector('#chkUseJellyfinOSCredentials');
+        const subtitleSettingsContainer = document.querySelector('#subtitleSettings');
+
         // Cache DOM elements - selects
         const selStreamProvider = document.querySelector('#selStreamProvider');
         const selMovieApiSource = document.querySelector('#selMovieApiSource');
@@ -360,6 +420,10 @@
 
         function updateAnimeAudioTracksVisibility() {
           animeAudioTracksContainer.style.display = chkEnableAnimeAudioVersions.checked ? 'block' : 'none';
+        }
+
+        function updateSubtitleSettingsVisibility() {
+          subtitleSettingsContainer.style.display = chkEnableSubtitles.checked ? 'block' : 'none';
         }
 
         // Helper to set select value - handles custom element timing
@@ -408,6 +472,13 @@
             chkEnableAnimeAudioVersions.checked = config.EnableAnimeAudioVersions ?? false;
             txtAnimeAudioTracks.value = config.AnimeAudioTracks || 'sub,dub';
 
+            // Subtitle settings
+            chkEnableSubtitles.checked = config.EnableSubtitles ?? false;
+            txtOpenSubtitlesApiKey.value = config.OpenSubtitlesApiKey || '';
+            txtSubtitleLanguages.value = config.SubtitleLanguages || 'en';
+            txtSubtitleCachePath.value = config.SubtitleCachePath || '/tmp/jellyfin-dynamiclibrary-subtitles';
+            chkUseJellyfinOSCredentials.checked = config.UseJellyfinOpenSubtitlesCredentials ?? true;
+
             // Select dropdowns - use helper to handle custom element timing
             // Enum values come as strings from C# JSON serialization
             setSelectValue(selStreamProvider, config.StreamProvider || 'None');
@@ -422,6 +493,7 @@
             updateStreamProviderVisibility();
             updateLanguageVisibility();
             updateAnimeAudioTracksVisibility();
+            updateSubtitleSettingsVisibility();
           } catch (err) {
             console.error('Dynamic Library: Failed to load configuration', err);
           } finally {
@@ -458,6 +530,13 @@
             config.EnableAnimeAudioVersions = chkEnableAnimeAudioVersions.checked;
             config.AnimeAudioTracks = txtAnimeAudioTracks.value.trim() || 'sub,dub';
 
+            // Subtitle settings
+            config.EnableSubtitles = chkEnableSubtitles.checked;
+            config.OpenSubtitlesApiKey = txtOpenSubtitlesApiKey.value.trim();
+            config.SubtitleLanguages = txtSubtitleLanguages.value.trim() || 'en';
+            config.SubtitleCachePath = txtSubtitleCachePath.value.trim() || '/tmp/jellyfin-dynamiclibrary-subtitles';
+            config.UseJellyfinOpenSubtitlesCredentials = chkUseJellyfinOSCredentials.checked;
+
             // Select dropdowns - enum values are serialized as strings
             config.StreamProvider = selStreamProvider.value;
             config.MovieApiSource = selMovieApiSource.value;
@@ -483,6 +562,7 @@
         selStreamProvider.addEventListener('change', updateStreamProviderVisibility);
         selLanguageMode.addEventListener('change', updateLanguageVisibility);
         chkEnableAnimeAudioVersions.addEventListener('change', updateAnimeAudioTracksVisibility);
+        chkEnableSubtitles.addEventListener('change', updateSubtitleSettingsVisibility);
 
         // Load config when page is shown (works with Jellyfin's SPA navigation)
         page.addEventListener('viewshow', loadConfig);

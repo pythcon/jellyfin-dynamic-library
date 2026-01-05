@@ -1,4 +1,5 @@
 using System.Linq;
+using Jellyfin.Plugin.DynamicLibrary.Models;
 using MediaBrowser.Model.Dto;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
@@ -22,6 +23,7 @@ public class DynamicItemCache
     private const string EpisodesPrefix = "dynamic_episodes:";
     private const string EmbedarrAddedPrefix = "embedarr_added:";
     private const string MediaSourcePrefix = "mediasource_to_episode:";
+    private const string SubtitlesPrefix = "dynamic_subtitles:";
 
     public DynamicItemCache(IMemoryCache cache, ILogger<DynamicItemCache> logger)
     {
@@ -182,5 +184,35 @@ public class DynamicItemCache
     {
         var key = $"{MediaSourcePrefix}{mediaSourceId}";
         return _cache.TryGetValue<Guid>(key, out var episodeId) ? episodeId : null;
+    }
+
+    /// <summary>
+    /// Store subtitles for an item.
+    /// </summary>
+    public void StoreSubtitles(Guid itemId, List<CachedSubtitle> subtitles)
+    {
+        var key = $"{SubtitlesPrefix}{itemId}";
+        _cache.Set(key, subtitles, _cacheDuration);
+        _logger.LogDebug("[DynamicItemCache] Stored {Count} subtitles for item {ItemId}",
+            subtitles.Count, itemId);
+    }
+
+    /// <summary>
+    /// Get all subtitles for an item.
+    /// </summary>
+    public List<CachedSubtitle>? GetSubtitles(Guid itemId)
+    {
+        var key = $"{SubtitlesPrefix}{itemId}";
+        return _cache.TryGetValue<List<CachedSubtitle>>(key, out var subtitles) ? subtitles : null;
+    }
+
+    /// <summary>
+    /// Get a specific subtitle by item ID and language code.
+    /// </summary>
+    public CachedSubtitle? GetSubtitle(Guid itemId, string languageCode)
+    {
+        var subtitles = GetSubtitles(itemId);
+        return subtitles?.FirstOrDefault(s =>
+            s.LanguageCode.Equals(languageCode, StringComparison.OrdinalIgnoreCase));
     }
 }
