@@ -294,6 +294,12 @@ public class PluginConfiguration : BasePluginConfiguration
     public string SubtitleLanguages { get; set; } = "en";
 
     /// <summary>
+    /// Gets or sets the maximum number of subtitles to download per language.
+    /// Default: 1 (download the best subtitle for each language)
+    /// </summary>
+    public int MaxSubtitlesPerLanguage { get; set; } = 1;
+
+    /// <summary>
     /// Gets or sets whether to use credentials from Jellyfin's OpenSubtitles plugin.
     /// </summary>
     public bool UseJellyfinOpenSubtitlesCredentials { get; set; } = true;

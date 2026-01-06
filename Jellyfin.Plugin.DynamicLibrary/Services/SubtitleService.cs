@@ -168,7 +168,7 @@ public class SubtitleService
     }
 
     /// <summary>
-    /// Process search results and download best subtitle for each language.
+    /// Process search results and download subtitles for each language.
     /// </summary>
     private async Task<List<CachedSubtitle>> ProcessSearchResultsAsync(
         Guid itemId,
@@ -178,82 +178,100 @@ public class SubtitleService
     {
         var subtitles = new List<CachedSubtitle>();
         var cachePath = GetSubtitleCachePath();
+        var maxPerLanguage = Math.Max(1, Config.MaxSubtitlesPerLanguage);
 
         foreach (var language in requestedLanguages)
         {
-            // Find best subtitle for this language (highest download count, prefer non-machine translated)
-            var bestResult = results
+            // Find top N subtitles for this language (highest download count, prefer non-machine translated)
+            var humanResults = results
                 .Where(r => r.Attributes.Language.Equals(language, StringComparison.OrdinalIgnoreCase))
-                .Where(r => !r.Attributes.MachineTranslated) // Prefer human translated
+                .Where(r => !r.Attributes.MachineTranslated)
                 .OrderByDescending(r => r.Attributes.DownloadCount)
-                .FirstOrDefault();
+                .Take(maxPerLanguage)
+                .ToList();
 
-            // Fall back to machine translated if no human translated available
-            if (bestResult == null)
+            // If we don't have enough human translated, fill with machine translated
+            if (humanResults.Count < maxPerLanguage)
             {
-                bestResult = results
+                var machineResults = results
                     .Where(r => r.Attributes.Language.Equals(language, StringComparison.OrdinalIgnoreCase))
+                    .Where(r => r.Attributes.MachineTranslated)
                     .OrderByDescending(r => r.Attributes.DownloadCount)
-                    .FirstOrDefault();
+                    .Take(maxPerLanguage - humanResults.Count)
+                    .ToList();
+                humanResults.AddRange(machineResults);
             }
 
-            if (bestResult == null || bestResult.Attributes.Files.Count == 0)
+            if (humanResults.Count == 0)
             {
                 _logger.LogDebug("[SubtitleService] No subtitle found for language: {Language}", language);
                 continue;
             }
 
-            var fileId = bestResult.Attributes.Files[0].FileId;
-
-            // Check if we already have this file cached on disk
-            var filePath = Path.Combine(cachePath, $"{itemId}_{language}.vtt");
-            if (File.Exists(filePath))
+            // Process each result for this language
+            for (var i = 0; i < humanResults.Count; i++)
             {
-                _logger.LogDebug("[SubtitleService] Using cached subtitle file: {Path}", filePath);
+                var result = humanResults[i];
+                if (result.Attributes.Files.Count == 0)
+                {
+                    continue;
+                }
+
+                var fileId = result.Attributes.Files[0].FileId;
+
+                // Use index in filename to support multiple subtitles per language
+                var fileName = maxPerLanguage > 1 ? $"{itemId}_{language}_{i}.vtt" : $"{itemId}_{language}.vtt";
+                var filePath = Path.Combine(cachePath, fileName);
+
+                // Check if we already have this file cached on disk
+                if (File.Exists(filePath))
+                {
+                    _logger.LogDebug("[SubtitleService] Using cached subtitle file: {Path}", filePath);
+                    subtitles.Add(new CachedSubtitle
+                    {
+                        Language = SubtitleConverter.GetLanguageDisplayName(language) + (i > 0 ? $" ({i + 1})" : ""),
+                        LanguageCode = maxPerLanguage > 1 ? $"{language}_{i}" : language,
+                        FilePath = filePath,
+                        CachedAt = File.GetLastWriteTimeUtc(filePath),
+                        HearingImpaired = result.Attributes.HearingImpaired
+                    });
+                    continue;
+                }
+
+                var srtContent = await _openSubtitlesClient.DownloadSubtitleAsync(fileId, cancellationToken);
+
+                if (string.IsNullOrEmpty(srtContent))
+                {
+                    _logger.LogInformation("[SubtitleService] Failed to download subtitle file: {FileId}", fileId);
+                    continue;
+                }
+
+                // Convert SRT to WebVTT
+                var vttContent = SubtitleConverter.SrtToWebVtt(srtContent);
+
+                // Save to disk
+                try
+                {
+                    await File.WriteAllTextAsync(filePath, vttContent, cancellationToken);
+                    _logger.LogDebug("[SubtitleService] Saved subtitle to: {Path}", filePath);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "[SubtitleService] Failed to save subtitle to: {Path}", filePath);
+                    continue;
+                }
+
                 subtitles.Add(new CachedSubtitle
                 {
-                    Language = SubtitleConverter.GetLanguageDisplayName(language),
-                    LanguageCode = language,
+                    Language = SubtitleConverter.GetLanguageDisplayName(language) + (i > 0 ? $" ({i + 1})" : ""),
+                    LanguageCode = maxPerLanguage > 1 ? $"{language}_{i}" : language,
                     FilePath = filePath,
-                    CachedAt = File.GetLastWriteTimeUtc(filePath),
-                    HearingImpaired = bestResult.Attributes.HearingImpaired
+                    CachedAt = DateTime.UtcNow,
+                    HearingImpaired = result.Attributes.HearingImpaired
                 });
-                continue;
+
+                _logger.LogDebug("[SubtitleService] Downloaded and converted subtitle: {Language} ({Index})", language, i + 1);
             }
-
-            var srtContent = await _openSubtitlesClient.DownloadSubtitleAsync(fileId, cancellationToken);
-
-            if (string.IsNullOrEmpty(srtContent))
-            {
-                _logger.LogInformation("[SubtitleService] Failed to download subtitle file: {FileId}", fileId);
-                continue;
-            }
-
-            // Convert SRT to WebVTT
-            var vttContent = SubtitleConverter.SrtToWebVtt(srtContent);
-
-            // Save to disk
-            try
-            {
-                await File.WriteAllTextAsync(filePath, vttContent, cancellationToken);
-                _logger.LogDebug("[SubtitleService] Saved subtitle to: {Path}", filePath);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[SubtitleService] Failed to save subtitle to: {Path}", filePath);
-                continue;
-            }
-
-            subtitles.Add(new CachedSubtitle
-            {
-                Language = SubtitleConverter.GetLanguageDisplayName(language),
-                LanguageCode = language,
-                FilePath = filePath,
-                CachedAt = DateTime.UtcNow,
-                HearingImpaired = bestResult.Attributes.HearingImpaired
-            });
-
-            _logger.LogDebug("[SubtitleService] Downloaded and converted subtitle: {Language}", language);
         }
 
         return subtitles;

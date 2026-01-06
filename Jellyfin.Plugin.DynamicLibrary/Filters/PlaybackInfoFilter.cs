@@ -5,6 +5,7 @@ using Jellyfin.Plugin.DynamicLibrary.Configuration;
 using Jellyfin.Plugin.DynamicLibrary.Models;
 using Jellyfin.Plugin.DynamicLibrary.Services;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Dto;
@@ -598,6 +599,22 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             if (item.Type == BaseItemKind.Episode)
             {
                 var series = item.SeriesId.HasValue ? _itemCache.GetItem(item.SeriesId.Value) : null;
+
+                // For persisted items, series won't be in cache - get from library
+                if (series == null && item.SeriesId.HasValue)
+                {
+                    var libraryItem = _libraryManager.GetItemById(item.SeriesId.Value);
+                    if (libraryItem != null)
+                    {
+                        series = new BaseItemDto
+                        {
+                            Id = libraryItem.Id,
+                            Name = libraryItem.Name,
+                            ProviderIds = libraryItem.ProviderIds
+                        };
+                    }
+                }
+
                 return await _subtitleService.FetchEpisodeSubtitlesAsync(item, series, cancellationToken);
             }
 
@@ -915,6 +932,21 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                 Type = item.GetBaseItemKind(),
                 ProviderIds = item.ProviderIds
             };
+
+            // For episodes, add series info needed for subtitle lookup
+            if (item is Episode episode)
+            {
+                dto.SeriesId = episode.SeriesId;
+                dto.ParentIndexNumber = episode.ParentIndexNumber;
+                dto.IndexNumber = episode.IndexNumber;
+
+                // Get series name from library
+                var series = _libraryManager.GetItemById(episode.SeriesId);
+                if (series != null)
+                {
+                    dto.SeriesName = series.Name;
+                }
+            }
 
             return await FetchSubtitlesAsync(dto, cancellationToken);
         }

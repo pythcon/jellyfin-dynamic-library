@@ -319,6 +319,14 @@
               </div>
 
               <div class="inputContainer">
+                <label class="inputLabel inputLabelUnfocused" for="txtMaxSubtitlesPerLanguage">Max Subtitles Per Language:</label>
+                <input is="emby-input" type="number" id="txtMaxSubtitlesPerLanguage" class="emby-input" min="1" value="1" />
+                <div class="fieldDescription">
+                  Maximum number of subtitle files to download for each language. Default: 1 (best match only).
+                </div>
+              </div>
+
+              <div class="inputContainer">
                 <label class="inputLabel inputLabelUnfocused" for="txtSubtitleCachePath">Subtitle Cache Path:</label>
                 <input is="emby-input" type="text" id="txtSubtitleCachePath" class="emby-input" placeholder="/tmp/jellyfin-dynamiclibrary-subtitles" />
                 <div class="fieldDescription">
@@ -441,6 +449,7 @@
         const chkEnableSubtitles = document.querySelector('#chkEnableSubtitles');
         const txtOpenSubtitlesApiKey = document.querySelector('#txtOpenSubtitlesApiKey');
         const txtSubtitleLanguages = document.querySelector('#txtSubtitleLanguages');
+        const txtMaxSubtitlesPerLanguage = document.querySelector('#txtMaxSubtitlesPerLanguage');
         const txtSubtitleCachePath = document.querySelector('#txtSubtitleCachePath');
         const chkUseJellyfinOSCredentials = document.querySelector('#chkUseJellyfinOSCredentials');
         const subtitleSettingsContainer = document.querySelector('#subtitleSettings');
@@ -554,6 +563,7 @@
             chkEnableSubtitles.checked = config.EnableSubtitles ?? false;
             txtOpenSubtitlesApiKey.value = config.OpenSubtitlesApiKey || '';
             txtSubtitleLanguages.value = config.SubtitleLanguages || 'en';
+            txtMaxSubtitlesPerLanguage.value = config.MaxSubtitlesPerLanguage ?? 1;
             txtSubtitleCachePath.value = config.SubtitleCachePath || '/tmp/jellyfin-dynamiclibrary-subtitles';
             chkUseJellyfinOSCredentials.checked = config.UseJellyfinOpenSubtitlesCredentials ?? true;
 
@@ -619,6 +629,7 @@
             config.EnableSubtitles = chkEnableSubtitles.checked;
             config.OpenSubtitlesApiKey = txtOpenSubtitlesApiKey.value.trim();
             config.SubtitleLanguages = txtSubtitleLanguages.value.trim() || 'en';
+            config.MaxSubtitlesPerLanguage = parseInt(txtMaxSubtitlesPerLanguage.value, 10) || 1;
             config.SubtitleCachePath = txtSubtitleCachePath.value.trim() || '/tmp/jellyfin-dynamiclibrary-subtitles';
             config.UseJellyfinOpenSubtitlesCredentials = chkUseJellyfinOSCredentials.checked;
 
