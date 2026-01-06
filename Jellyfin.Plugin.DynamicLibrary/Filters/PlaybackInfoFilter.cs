@@ -26,6 +26,8 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
 {
     private readonly DynamicItemCache _itemCache;
     private readonly IEmbedarrClient _embedarrClient;
+    private readonly ITmdbClient _tmdbClient;
+    private readonly ITvdbClient _tvdbClient;
     private readonly SubtitleService _subtitleService;
     private readonly ILibraryManager _libraryManager;
     private readonly ILogger<PlaybackInfoFilter> _logger;
@@ -39,12 +41,16 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
     public PlaybackInfoFilter(
         DynamicItemCache itemCache,
         IEmbedarrClient embedarrClient,
+        ITmdbClient tmdbClient,
+        ITvdbClient tvdbClient,
         SubtitleService subtitleService,
         ILibraryManager libraryManager,
         ILogger<PlaybackInfoFilter> logger)
     {
         _itemCache = itemCache;
         _embedarrClient = embedarrClient;
+        _tmdbClient = tmdbClient;
+        _tvdbClient = tvdbClient;
         _subtitleService = subtitleService;
         _libraryManager = libraryManager;
         _logger = logger;
@@ -137,9 +143,10 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                                 subtitles?.Count ?? 0, libraryItem.Name);
                         }
 
-                        var response = BuildPlaybackInfoResponseFromPath(libraryItem, persistedStreamUrl, subtitles);
-                        _logger.LogWarning("[DynamicLibrary] PlaybackInfoFilter: Returning response with URL={Url}, DirectPlay={DirectPlay}, DirectStream={DirectStream}",
+                        var response = await BuildPlaybackInfoResponseFromPathAsync(libraryItem, persistedStreamUrl, subtitles, context.HttpContext.RequestAborted);
+                        _logger.LogWarning("[DynamicLibrary] PlaybackInfoFilter: Returning response with URL={Url}, Runtime={Runtime}, DirectPlay={DirectPlay}, DirectStream={DirectStream}",
                             persistedStreamUrl,
+                            response.MediaSources?.FirstOrDefault()?.RunTimeTicks,
                             response.MediaSources?.FirstOrDefault()?.SupportsDirectPlay,
                             response.MediaSources?.FirstOrDefault()?.SupportsDirectStream);
                         context.Result = new OkObjectResult(response);
@@ -874,10 +881,13 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
     /// <summary>
     /// Build PlaybackInfoResponse for a persisted library item with a stream URL.
     /// </summary>
-    private PlaybackInfoResponse BuildPlaybackInfoResponseFromPath(BaseItem item, string streamUrl, List<CachedSubtitle>? subtitles)
+    private async Task<PlaybackInfoResponse> BuildPlaybackInfoResponseFromPathAsync(BaseItem item, string streamUrl, List<CachedSubtitle>? subtitles, CancellationToken cancellationToken)
     {
         // Build subtitle streams
         var subtitleStreams = BuildSubtitleMediaStreams(item.Id, item.Id.ToString("N"), subtitles);
+
+        // Get runtime from API (Jellyfin doesn't scrape .strm files)
+        var runTimeTicks = await GetRuntimeForPersistedItemAsync(item, cancellationToken);
 
         var mediaSource = new MediaSourceInfo
         {
@@ -900,21 +910,80 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             RequiresOpening = false,
             RequiresClosing = false,
 
-            // Runtime from item
-            RunTimeTicks = item.RunTimeTicks,
+            // Runtime from API lookup
+            RunTimeTicks = runTimeTicks,
 
             // Include subtitle streams
             MediaStreams = subtitleStreams.Count > 0 ? subtitleStreams : new List<MediaStream>()
         };
 
-        _logger.LogDebug("[DynamicLibrary] Built PlaybackInfoResponse for persisted item {Name} with URL {Url}, {SubCount} subtitles",
-            item.Name, streamUrl, subtitleStreams.Count);
+        _logger.LogDebug("[DynamicLibrary] Built PlaybackInfoResponse for persisted item {Name} with URL {Url}, Runtime {Runtime}, {SubCount} subtitles",
+            item.Name, streamUrl, runTimeTicks, subtitleStreams.Count);
 
         return new PlaybackInfoResponse
         {
             MediaSources = new[] { mediaSource },
             PlaySessionId = Guid.NewGuid().ToString("N")
         };
+    }
+
+    /// <summary>
+    /// Get runtime for a persisted item from cache or API.
+    /// </summary>
+    private async Task<long?> GetRuntimeForPersistedItemAsync(BaseItem item, CancellationToken cancellationToken)
+    {
+        // Try library item first (in case Jellyfin has metadata)
+        if (item.RunTimeTicks > 0)
+        {
+            return item.RunTimeTicks;
+        }
+
+        // Try TMDB (movies)
+        if (item.ProviderIds?.TryGetValue("Tmdb", out var tmdbId) == true &&
+            int.TryParse(tmdbId, out var tmdbIdInt))
+        {
+            // Try cache first
+            var cached = _itemCache.GetItem(DynamicUri.FromTmdb(tmdbIdInt).ToGuid());
+            if (cached?.RunTimeTicks > 0)
+            {
+                _logger.LogDebug("[DynamicLibrary] Got runtime from cache for TMDB {Id}: {Ticks}", tmdbIdInt, cached.RunTimeTicks);
+                return cached.RunTimeTicks;
+            }
+
+            // Query API
+            var details = await _tmdbClient.GetMovieDetailsAsync(tmdbIdInt, cancellationToken);
+            if (details?.Runtime > 0)
+            {
+                var ticks = details.Runtime.Value * 600_000_000L;
+                _logger.LogDebug("[DynamicLibrary] Got runtime from TMDB API for {Id}: {Minutes} min = {Ticks} ticks", tmdbIdInt, details.Runtime, ticks);
+                return ticks;
+            }
+        }
+
+        // Try TVDB (TV shows/episodes)
+        if (item.ProviderIds?.TryGetValue("Tvdb", out var tvdbId) == true &&
+            int.TryParse(tvdbId, out var tvdbIdInt))
+        {
+            // Try cache first
+            var cached = _itemCache.GetItem(DynamicUri.FromTvdb(tvdbIdInt).ToGuid());
+            if (cached?.RunTimeTicks > 0)
+            {
+                _logger.LogDebug("[DynamicLibrary] Got runtime from cache for TVDB {Id}: {Ticks}", tvdbIdInt, cached.RunTimeTicks);
+                return cached.RunTimeTicks;
+            }
+
+            // Query TVDB API for series details (has AverageRuntime)
+            var details = await _tvdbClient.GetSeriesExtendedAsync(tvdbIdInt, cancellationToken);
+            if (details?.AverageRuntime > 0)
+            {
+                var ticks = details.AverageRuntime.Value * 600_000_000L;
+                _logger.LogDebug("[DynamicLibrary] Got runtime from TVDB API for {Id}: {Minutes} min = {Ticks} ticks", tvdbIdInt, details.AverageRuntime, ticks);
+                return ticks;
+            }
+        }
+
+        _logger.LogDebug("[DynamicLibrary] Could not get runtime for persisted item {Name}", item.Name);
+        return null;
     }
 
     /// <summary>
