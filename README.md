@@ -207,6 +207,52 @@ Virtual items use deterministic GUIDs generated from a unique prefix (`jellyfin-
 - **Issues:** [GitHub Issues](https://github.com/pythcon/jellyfin-dynamic-library/issues)
 - **Discussions:** [GitHub Discussions](https://github.com/pythcon/jellyfin-dynamic-library/discussions)
 
+## Development
+
+### Building Locally
+
+```bash
+dotnet build Jellyfin.Plugin.DynamicLibrary/Jellyfin.Plugin.DynamicLibrary.csproj -c Release
+```
+
+### Local Testing
+
+```bash
+# Start test Jellyfin container
+cd jellyfin-test && docker-compose up -d
+
+# Build and install plugin
+./install-plugin.sh jellyfin
+```
+
+### Release Process
+
+1. Update version in `Jellyfin.Plugin.DynamicLibrary/Jellyfin.Plugin.DynamicLibrary.csproj`:
+   ```xml
+   <Version>X.Y.Z</Version>
+   <AssemblyVersion>X.Y.Z.0</AssemblyVersion>
+   <FileVersion>X.Y.Z.0</FileVersion>
+   ```
+
+2. Update version in `.github/workflows/build.yaml`:
+   - `meta.json` version field
+   - ZIP filename (`dynamic-library-X.Y.Z.zip`)
+
+3. Commit changes:
+   ```bash
+   git add -A && git commit -m "Bump version to X.Y.Z"
+   ```
+
+4. Create and push version tag:
+   ```bash
+   git tag vX.Y.Z && git push && git push --tags
+   ```
+
+5. GitHub Actions will automatically:
+   - Build the plugin
+   - Create a GitHub Release with the ZIP
+   - Update `manifest.json` on gh-pages
+
 ## License
 
 MIT - See [LICENSE](LICENSE) file for details.
