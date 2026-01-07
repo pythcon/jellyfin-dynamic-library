@@ -30,11 +30,15 @@ jobs:
 
       - name: Create plugin package
         run: |
+          # Extract version from csproj
+          VERSION=$(grep -oPm1 "(?<=<Version>)[^<]+" Jellyfin.Plugin.DynamicLibrary/Jellyfin.Plugin.DynamicLibrary.csproj)
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
           mkdir -p artifacts/DynamicLibrary
           cp Jellyfin.Plugin.DynamicLibrary/bin/Release/net9.0/Jellyfin.Plugin.DynamicLibrary.dll artifacts/DynamicLibrary/
 
           # Create meta.json
-          cat > artifacts/DynamicLibrary/meta.json << 'EOF'
+          cat > artifacts/DynamicLibrary/meta.json << EOF
           {
             "guid": "bc6b8d94-3800-4ab9-8f61-cf26ca1ab98c",
             "name": "Dynamic Library",
@@ -42,7 +46,7 @@ jobs:
             "overview": "Browse and stream content from TMDB/TVDB without local files",
             "owner": "pythcon",
             "category": "Metadata",
-            "version": "1.0.0.0",
+            "version": "${VERSION}.0",
             "targetAbi": "10.11.0.0",
             "status": "Active"
           }
@@ -50,19 +54,19 @@ jobs:
 
           # Create ZIP
           cd artifacts
-          zip -r dynamic-library-1.0.0.zip DynamicLibrary/
+          zip -r dynamic-library-${VERSION}.zip DynamicLibrary/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: dynamic-library
-          path: artifacts/dynamic-library-1.0.0.zip
+          path: artifacts/dynamic-library-*.zip
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/dynamic-library-1.0.0.zip
+          files: artifacts/dynamic-library-*.zip
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -88,31 +92,45 @@ jobs:
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          CHECKSUM=$(md5sum dynamic-library-1.0.0.zip | cut -d ' ' -f 1)
+          CHECKSUM=$(md5sum dynamic-library-${VERSION}.zip | cut -d ' ' -f 1)
 
-          cat > manifest.json << EOF
-          [
-            {
-              "guid": "bc6b8d94-3800-4ab9-8f61-cf26ca1ab98c",
-              "name": "Dynamic Library",
-              "description": "Browse and stream movies, TV shows, and anime from TMDB and TVDB without local media files. Supports direct URL streaming and watch progress tracking.",
-              "overview": "Browse and stream content from TMDB/TVDB without local files",
-              "owner": "pythcon",
-              "category": "Metadata",
-              "imageUrl": "https://pythcon.github.io/jellyfin-dynamic-library/DynamicLibrary.png",
-              "versions": [
-                {
-                  "version": "${VERSION}.0",
-                  "changelog": "See GitHub releases for changelog",
-                  "targetAbi": "10.11.0.0",
-                  "sourceUrl": "https://github.com/pythcon/jellyfin-dynamic-library/releases/download/v${VERSION}/dynamic-library-1.0.0.zip",
-                  "checksum": "${CHECKSUM}",
-                  "timestamp": "${TIMESTAMP}"
-                }
-              ]
-            }
-          ]
-          EOF
+          # Create new version entry
+          NEW_VERSION=$(jq -n \
+            --arg version "${VERSION}.0" \
+            --arg changelog "See GitHub releases for changelog" \
+            --arg targetAbi "10.11.0.0" \
+            --arg sourceUrl "https://github.com/pythcon/jellyfin-dynamic-library/releases/download/v${VERSION}/dynamic-library-${VERSION}.zip" \
+            --arg checksum "${CHECKSUM}" \
+            --arg timestamp "${TIMESTAMP}" \
+            '{
+              version: $version,
+              changelog: $changelog,
+              targetAbi: $targetAbi,
+              sourceUrl: $sourceUrl,
+              checksum: $checksum,
+              timestamp: $timestamp
+            }')
+
+          # Check if manifest exists and has versions
+          if [ -f manifest.json ] && jq -e '.[0].versions' manifest.json > /dev/null 2>&1; then
+            # Prepend new version to existing versions array (newer versions first)
+            jq --argjson newVersion "$NEW_VERSION" \
+              '.[0].versions = [$newVersion] + [.[0].versions[] | select(.version != $newVersion.version)]' \
+              manifest.json > manifest.tmp && mv manifest.tmp manifest.json
+          else
+            # Create new manifest from scratch
+            jq -n --argjson newVersion "$NEW_VERSION" \
+              '[{
+                guid: "bc6b8d94-3800-4ab9-8f61-cf26ca1ab98c",
+                name: "Dynamic Library",
+                description: "Browse and stream movies, TV shows, and anime from TMDB and TVDB without local media files. Supports direct URL streaming and watch progress tracking.",
+                overview: "Browse and stream content from TMDB/TVDB without local files",
+                owner: "pythcon",
+                category: "Metadata",
+                imageUrl: "https://pythcon.github.io/jellyfin-dynamic-library/DynamicLibrary.png",
+                versions: [$newVersion]
+              }]' > manifest.json
+          fi
 
       - name: Commit and push manifest
         run: |
