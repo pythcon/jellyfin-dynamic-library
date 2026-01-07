@@ -946,6 +946,16 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             // Get runtime from API
             var runTimeTicks = await GetRuntimeForPersistedItemAsync(item, cancellationToken);
 
+            // CRITICAL: Update database item so Jellyfin can track progress correctly
+            // Jellyfin uses the database RunTimeTicks for progress calculation, not the one we return
+            if (runTimeTicks.HasValue && item.RunTimeTicks != runTimeTicks.Value)
+            {
+                item.RunTimeTicks = runTimeTicks.Value;
+                await _libraryManager.UpdateItemAsync(item, item.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken);
+                _logger.LogInformation("[DynamicLibrary] Updated database RunTimeTicks for {Name}: {Ticks} ({Minutes} min)",
+                    item.Name, runTimeTicks.Value, runTimeTicks.Value / 600_000_000);
+            }
+
             // Parse audio tracks from config
             var audioTracks = config.AnimeAudioTracks
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -1090,6 +1100,16 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         // Get runtime from API (Jellyfin doesn't scrape .strm files)
         var runTimeTicks = await GetRuntimeForPersistedItemAsync(item, cancellationToken);
 
+        // CRITICAL: Update database item so Jellyfin can track progress correctly
+        // Jellyfin uses the database RunTimeTicks for progress calculation, not the one we return
+        if (runTimeTicks.HasValue && item.RunTimeTicks != runTimeTicks.Value)
+        {
+            item.RunTimeTicks = runTimeTicks.Value;
+            await _libraryManager.UpdateItemAsync(item, item.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken);
+            _logger.LogInformation("[DynamicLibrary] Updated database RunTimeTicks for {Name}: {Ticks} ({Minutes} min)",
+                item.Name, runTimeTicks.Value, runTimeTicks.Value / 600_000_000);
+        }
+
         var mediaSource = new MediaSourceInfo
         {
             Id = item.Id.ToString("N"),
@@ -1196,8 +1216,47 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             }
         }
 
-        _logger.LogDebug("[DynamicLibrary] Could not get runtime for persisted item {Name}", item.Name);
-        return null;
+        // Try getting runtime from parent series (Jellyfin metadata)
+        if (item is Episode episode2)
+        {
+            var series = _libraryManager.GetItemById(episode2.SeriesId);
+            // Series.RunTimeTicks is often the average episode runtime
+            if (series?.RunTimeTicks > 0)
+            {
+                _logger.LogDebug("[DynamicLibrary] Got runtime from parent series for {Name}: {Ticks}",
+                    item.Name, series.RunTimeTicks);
+                return series.RunTimeTicks;
+            }
+        }
+
+        // Fallback: Use sensible defaults based on content type
+        // Without runtime, Jellyfin can't calculate progress percentage and will mark as watched immediately
+        if (item is Episode episode3)
+        {
+            // Check if anime based on path
+            var isAnime = item.Path?.Contains("/anime/", StringComparison.OrdinalIgnoreCase) == true;
+            var defaultMinutes = isAnime ? 24 : 45;
+            var defaultTicks = defaultMinutes * 600_000_000L;
+            _logger.LogWarning("[DynamicLibrary] GetRuntimeForPersistedItemAsync: Using default {Minutes}-minute runtime for episode {Name} (no runtime found, TMDB={Tmdb}, TVDB={Tvdb})",
+                defaultMinutes, item.Name,
+                item.ProviderIds?.GetValueOrDefault("Tmdb") ?? "null",
+                item.ProviderIds?.GetValueOrDefault("Tvdb") ?? "null");
+            return defaultTicks;
+        }
+
+        if (item is MediaBrowser.Controller.Entities.Movies.Movie)
+        {
+            // Movie default: 120 minutes (2 hours)
+            var defaultTicks = 120 * 600_000_000L;
+            _logger.LogWarning("[DynamicLibrary] GetRuntimeForPersistedItemAsync: Using default 120-minute runtime for movie {Name} (no runtime found, TMDB={Tmdb})",
+                item.Name, item.ProviderIds?.GetValueOrDefault("Tmdb") ?? "null");
+            return defaultTicks;
+        }
+
+        // Generic fallback: 60 minutes
+        _logger.LogWarning("[DynamicLibrary] GetRuntimeForPersistedItemAsync: Using default 60-minute runtime for {Name} (unknown type: {Type})",
+            item.Name, item.GetType().Name);
+        return 60 * 600_000_000L;
     }
 
     /// <summary>
