@@ -6,6 +6,7 @@
     "overview": "Browse and stream content from TMDB/TVDB without local files",
     "owner": "pythcon",
     "category": "Metadata",
+    "imageUrl": "https://pythcon.github.io/jellyfin-dynamic-library/DynamicLibrary.png",
     "versions": [
       {
         "version": "1.0.0.0",
