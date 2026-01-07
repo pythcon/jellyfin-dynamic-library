@@ -1,0 +1,120 @@
+name: Build Plugin
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore Jellyfin.Plugin.DynamicLibrary/Jellyfin.Plugin.DynamicLibrary.csproj
+
+      - name: Build
+        run: dotnet build Jellyfin.Plugin.DynamicLibrary/Jellyfin.Plugin.DynamicLibrary.csproj -c Release --no-restore
+
+      - name: Create plugin package
+        run: |
+          mkdir -p artifacts/DynamicLibrary
+          cp Jellyfin.Plugin.DynamicLibrary/bin/Release/net9.0/Jellyfin.Plugin.DynamicLibrary.dll artifacts/DynamicLibrary/
+
+          # Create meta.json
+          cat > artifacts/DynamicLibrary/meta.json << 'EOF'
+          {
+            "guid": "bc6b8d94-3800-4ab9-8f61-cf26ca1ab98c",
+            "name": "Dynamic Library",
+            "description": "Browse and stream movies, TV shows, and anime from TMDB and TVDB without local media files. Supports direct URL streaming and watch progress tracking.",
+            "overview": "Browse and stream content from TMDB/TVDB without local files",
+            "owner": "pythcon",
+            "category": "Metadata",
+            "version": "1.0.0.0",
+            "targetAbi": "10.11.0.0",
+            "status": "Active"
+          }
+          EOF
+
+          # Create ZIP
+          cd artifacts
+          zip -r dynamic-library-1.0.0.zip DynamicLibrary/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dynamic-library
+          path: artifacts/dynamic-library-1.0.0.zip
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/dynamic-library-1.0.0.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-manifest:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout gh-pages
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dynamic-library
+
+      - name: Calculate checksum and update manifest
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          CHECKSUM=$(md5sum dynamic-library-1.0.0.zip | cut -d ' ' -f 1)
+
+          cat > manifest.json << EOF
+          [
+            {
+              "guid": "bc6b8d94-3800-4ab9-8f61-cf26ca1ab98c",
+              "name": "Dynamic Library",
+              "description": "Browse and stream movies, TV shows, and anime from TMDB and TVDB without local media files. Supports direct URL streaming and watch progress tracking.",
+              "overview": "Browse and stream content from TMDB/TVDB without local files",
+              "owner": "pythcon",
+              "category": "Metadata",
+              "versions": [
+                {
+                  "version": "${VERSION}.0",
+                  "changelog": "See GitHub releases for changelog",
+                  "targetAbi": "10.11.0.0",
+                  "sourceUrl": "https://github.com/pythcon/jellyfin-dynamic-library/releases/download/v${VERSION}/dynamic-library-1.0.0.zip",
+                  "checksum": "${CHECKSUM}",
+                  "timestamp": "${TIMESTAMP}"
+                }
+              ]
+            }
+          ]
+          EOF
+
+      - name: Commit and push manifest
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add manifest.json
+          git commit -m "Update manifest for ${GITHUB_REF#refs/tags/}" || echo "No changes to commit"
+          git push

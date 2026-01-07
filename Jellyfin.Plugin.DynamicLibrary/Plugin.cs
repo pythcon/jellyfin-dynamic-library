@@ -26,9 +26,10 @@ public class DynamicLibraryPlugin : BasePlugin<PluginConfiguration>, IHasWebPage
 
     public override string Name => "Dynamic Library";
 
-    public override Guid Id => Guid.Parse("A1B2C3D4-E5F6-7890-ABCD-EF1234567890");
+    public override Guid Id => Guid.Parse("BC6B8D94-3800-4AB9-8F61-CF26CA1AB98C");
 
-    public override string Description => "Infinite library powered by TVDB and TMDB with Embedarr integration.";
+    public override string Description =>
+        "Browse and stream movies, TV shows, and anime from TMDB and TVDB without local media files. Supports direct URL streaming and watch progress tracking.";
 
     public IEnumerable<PluginPageInfo> GetPages()
     {

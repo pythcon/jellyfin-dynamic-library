@@ -12,15 +12,36 @@ A Jellyfin plugin that creates an "infinite library" by displaying content from 
   - Embedarr instance, OR
   - Direct URL templates to your streaming service
 
+## Installation
+
+### From Plugin Repository (Recommended)
+
+1. In Jellyfin, go to **Dashboard → Plugins → Repositories**
+2. Click **Add** and enter:
+   - **Repository Name:** Dynamic Library
+   - **Repository URL:** `https://pythcon.github.io/jellyfin-dynamic-library/manifest.json`
+3. Click **Save**
+4. Go to the **Catalog** tab and find "Dynamic Library"
+5. Click **Install**
+6. Restart Jellyfin
+
+### Manual Installation
+
+1. Download the latest release from [GitHub Releases](https://github.com/pythcon/jellyfin-dynamic-library/releases)
+2. Extract the ZIP to your Jellyfin plugins directory:
+   - **Linux:** `/var/lib/jellyfin/plugins/DynamicLibrary/`
+   - **Docker:** `/config/plugins/DynamicLibrary/` (mapped volume)
+   - **Windows:** `C:\ProgramData\Jellyfin\Server\plugins\DynamicLibrary\`
+3. Restart Jellyfin
+
 ## Quick Start
 
-1. Install the plugin in Jellyfin (Plugins > Repositories or manual install)
-2. Go to **Dashboard > Plugins > Dynamic Library**
-3. Enter your TVDB and/or TMDB API keys
-4. Select API sources for each content type (Movies, TV Shows)
-5. (Optional) Configure a stream provider for playback
-6. Save and restart Jellyfin
-7. Search for any movie or TV show - results will include virtual items from the configured APIs
+1. Go to **Dashboard → Plugins → Dynamic Library**
+2. Enter your TVDB and/or TMDB API keys
+3. Select API sources for each content type (Movies, TV Shows)
+4. (Optional) Configure a stream provider for playback
+5. Save and restart Jellyfin
+6. Search for any movie or TV show - results will include virtual items from the configured APIs
 
 ## Features
 
@@ -181,6 +202,11 @@ Virtual items use deterministic GUIDs generated from a unique prefix (`jellyfin-
 - Some metadata may be incomplete depending on API availability
 - Episode translations may not be available for all languages in TVDB
 
+## Support
+
+- **Issues:** [GitHub Issues](https://github.com/pythcon/jellyfin-dynamic-library/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/pythcon/jellyfin-dynamic-library/discussions)
+
 ## License
 
-MIT
+MIT - See [LICENSE](LICENSE) file for details.

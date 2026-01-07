@@ -1,0 +1,22 @@
+name: "Dynamic Library"
+guid: "bc6b8d94-3800-4ab9-8f61-cf26ca1ab98c"
+version: "1.0.0"
+targetAbi: "10.11.0.0"
+framework: "net9.0"
+owner: "pythcon"
+overview: "Browse and stream content from TMDB/TVDB without local files"
+description: >
+  Browse and stream movies, TV shows, and anime from TMDB and TVDB
+  without local media files. Supports direct URL streaming and watch
+  progress tracking.
+category: "Metadata"
+artifacts:
+  - "Jellyfin.Plugin.DynamicLibrary.dll"
+changelog: |-
+  ## 1.0.0
+  - Initial release
+  - TMDB and TVDB integration for movies, TV shows, and anime
+  - Direct URL streaming support
+  - Watch progress tracking for persisted media
+  - OpenSubtitles integration
+  - Anime audio version selection (sub/dub)
