@@ -149,6 +149,13 @@ public class PluginConfiguration : BasePluginConfiguration
     public string DirectAnimeUrlTemplate { get; set; } = string.Empty;
 
     /// <summary>
+    /// Gets or sets whether to generate stream URLs for unreleased content.
+    /// When disabled (default), skips unreleased movies/episodes to prevent playback errors.
+    /// When enabled, generates stream URLs regardless of release date.
+    /// </summary>
+    public bool ShowUnreleasedStreams { get; set; } = false;
+
+    /// <summary>
     /// Gets or sets whether to enable sub/dub audio version selection for anime.
     /// When enabled, shows audio track options for anime episodes.
     /// Requires {audio} placeholder in DirectAnimeUrlTemplate.
@@ -329,4 +336,18 @@ public class PluginConfiguration : BasePluginConfiguration
     /// When enabled, Jellyfin will automatically scan for new content.
     /// </summary>
     public bool TriggerLibraryScan { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets whether to create persistent media for unreleased content.
+    /// When disabled (default), only creates media for movies/episodes that have been released.
+    /// When enabled, creates media regardless of release date.
+    /// </summary>
+    public bool CreateUnreleasedMedia { get; set; } = false;
+
+    /// <summary>
+    /// Gets or sets whether to check for updates when viewing persisted media.
+    /// For TV/anime: checks for and adds new aired episodes.
+    /// For movies: creates .strm if movie has now been released.
+    /// </summary>
+    public bool CheckForUpdatesOnView { get; set; } = true;
 }

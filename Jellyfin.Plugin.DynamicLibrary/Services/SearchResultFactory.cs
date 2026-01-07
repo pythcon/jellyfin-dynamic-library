@@ -50,6 +50,21 @@ public class SearchResultFactory
     {
         var dynamicUri = DynamicUri.FromTmdb(movie.Id);
         var imageBaseUrl = await _tmdbClient.GetImageBaseUrlAsync(cancellationToken);
+        var config = DynamicLibraryPlugin.Instance?.Configuration;
+
+        // Parse release date
+        DateTime? premiereDate = null;
+        if (!string.IsNullOrEmpty(movie.ReleaseDate) && DateTime.TryParse(movie.ReleaseDate, out var parsedDate))
+        {
+            premiereDate = parsedDate;
+        }
+
+        // Check if movie is released (for hiding play button on unreleased content)
+        var movieIsReleased = premiereDate.HasValue && premiereDate.Value <= DateTime.UtcNow;
+        var shouldBePlayable = config?.ShowUnreleasedStreams == true || movieIsReleased;
+
+        _logger.LogDebug("[DynamicLibrary] CreateMovieDto '{Name}': ReleaseDate={Date}, IsReleased={Released}, ShowUnreleasedStreams={ShowUnreleased}, ShouldBePlayable={ShouldPlay}",
+            movie.Title, premiereDate, movieIsReleased, config?.ShowUnreleasedStreams, shouldBePlayable);
 
         var dto = new BaseItemDto
         {
@@ -59,9 +74,10 @@ public class SearchResultFactory
             OriginalTitle = movie.OriginalTitle,
             Overview = movie.Overview,
             Type = BaseItemKind.Movie,
-            MediaType = Jellyfin.Data.Enums.MediaType.Video,
+            MediaType = shouldBePlayable ? Jellyfin.Data.Enums.MediaType.Video : default,
             IsFolder = false,
             ProductionYear = movie.Year,
+            PremiereDate = premiereDate,
             CommunityRating = (float)movie.VoteAverage,
             ProviderIds = new Dictionary<string, string>
             {
@@ -77,6 +93,13 @@ public class SearchResultFactory
                 Played = false
             }
         };
+
+        // Set LocationType.Virtual to hide play button on Android TV for unreleased content
+        // Android TV specifically checks LocationType to determine if content can be played
+        if (!shouldBePlayable)
+        {
+            dto.LocationType = LocationType.Virtual;
+        }
 
         // Build image URL and set ImageTags so client knows to request images
         string? imageUrl = null;
@@ -122,6 +145,27 @@ public class SearchResultFactory
             dto.ProviderIds ??= new Dictionary<string, string>();
             dto.ProviderIds["Imdb"] = details.ImdbId;
         }
+
+        // Set/update PremiereDate from detailed response
+        if (!string.IsNullOrEmpty(details.ReleaseDate) && DateTime.TryParse(details.ReleaseDate, out var releaseDate))
+        {
+            dto.PremiereDate = releaseDate;
+        }
+
+        // Ensure MediaType is correct based on release status (in case it wasn't set during search)
+        var config = DynamicLibraryPlugin.Instance?.Configuration;
+        var movieIsReleased = dto.PremiereDate.HasValue && dto.PremiereDate.Value <= DateTime.UtcNow;
+        var shouldBePlayable = config?.ShowUnreleasedStreams == true || movieIsReleased;
+        dto.MediaType = shouldBePlayable ? Jellyfin.Data.Enums.MediaType.Video : default;
+
+        // Set LocationType.Virtual to hide play button on Android TV for unreleased content
+        if (!shouldBePlayable)
+        {
+            dto.LocationType = LocationType.Virtual;
+        }
+
+        _logger.LogDebug("[DynamicLibrary] EnrichMovieDto '{Name}': PremiereDate={Date}, IsReleased={Released}, ShouldBePlayable={ShouldPlay}",
+            dto.Name, dto.PremiereDate, movieIsReleased, shouldBePlayable);
 
         // Runtime (convert minutes to ticks: 1 minute = 600,000,000 ticks)
         if (details.Runtime.HasValue && details.Runtime > 0)
@@ -575,6 +619,7 @@ public class SearchResultFactory
     public BaseItemDto CreateEpisodeDto(TvdbEpisode episode, Guid seriesId, string seriesName, Guid seasonId, TvdbTranslationData? translation = null, int? absoluteNumber = null, bool isAnime = false)
     {
         var episodeId = GenerateGuid($"tvdb:episode:{episode.Id}");
+        var episodeConfig = DynamicLibraryPlugin.Instance?.Configuration;
 
         // Use translated name/overview if available, otherwise fall back to original
         var displayName = !string.IsNullOrEmpty(translation?.Name)
@@ -585,6 +630,19 @@ public class SearchResultFactory
             ? translation.Overview
             : episode.Overview;
 
+        // Parse air date first to determine if episode should be playable
+        DateTime? premiereDate = null;
+        int? productionYear = null;
+        if (!string.IsNullOrEmpty(episode.Aired) && DateTime.TryParse(episode.Aired, out var airDate))
+        {
+            premiereDate = airDate;
+            productionYear = airDate.Year;
+        }
+
+        // Check if episode is released (for hiding play button on unreleased content)
+        var episodeIsReleased = premiereDate.HasValue && premiereDate.Value <= DateTime.UtcNow;
+        var shouldBePlayable = episodeConfig?.ShowUnreleasedStreams == true || episodeIsReleased;
+
         var dto = new BaseItemDto
         {
             Id = episodeId,
@@ -592,7 +650,7 @@ public class SearchResultFactory
             Name = displayName,
             Overview = displayOverview,
             Type = BaseItemKind.Episode,
-            MediaType = Jellyfin.Data.Enums.MediaType.Video,
+            MediaType = shouldBePlayable ? Jellyfin.Data.Enums.MediaType.Video : default,
             IsFolder = false,
             IndexNumber = episode.Number,
             ParentIndexNumber = episode.SeasonNumber,
@@ -600,6 +658,8 @@ public class SearchResultFactory
             SeasonId = seasonId,
             SeriesId = seriesId,
             SeriesName = seriesName,
+            PremiereDate = premiereDate,
+            ProductionYear = productionYear,
             ProviderIds = new Dictionary<string, string>
             {
                 { "Tvdb", episode.Id.ToString() },
@@ -616,17 +676,26 @@ public class SearchResultFactory
             }
         };
 
-        // Parse air date
-        if (!string.IsNullOrEmpty(episode.Aired) && DateTime.TryParse(episode.Aired, out var airDate))
+        // Set LocationType.Virtual to hide play button on Android TV for unreleased content
+        if (!shouldBePlayable)
         {
-            dto.PremiereDate = airDate;
-            dto.ProductionYear = airDate.Year;
+            dto.LocationType = LocationType.Virtual;
         }
 
         // Runtime (convert minutes to ticks)
+        // Use episode runtime if available, otherwise fall back to series average runtime
         if (episode.Runtime.HasValue && episode.Runtime > 0)
         {
             dto.RunTimeTicks = episode.Runtime.Value * 600_000_000L;
+        }
+        else
+        {
+            // Fall back to series average runtime from cache
+            var seriesDto = _itemCache.GetItem(seriesId);
+            if (seriesDto?.RunTimeTicks > 0)
+            {
+                dto.RunTimeTicks = seriesDto.RunTimeTicks.Value;
+            }
         }
 
         // Set image if available
@@ -641,16 +710,13 @@ public class SearchResultFactory
             episodeImageUrl = GetFullTvdbImageUrl(episode.Image);
         }
 
-        // Add MediaSources for version selector (sub/dub) on item details page
-        var config = DynamicLibraryPlugin.Instance?.Configuration;
+        // Add MediaSources for anime with sub/dub version selector (only if episode is playable)
+        _logger.LogDebug("[DynamicLibrary] CreateEpisodeDto '{Name}': isAnime={IsAnime}, EnableAudioVersions={EnableAudio}, StreamProvider={Provider}, IsReleased={Released}, ShouldBePlayable={Playable}",
+            dto.Name, isAnime, episodeConfig?.EnableAnimeAudioVersions, episodeConfig?.StreamProvider, episodeIsReleased, shouldBePlayable);
 
-        // Log the conditions for debugging
-        _logger.LogDebug("[DynamicLibrary] CreateEpisodeDto '{Name}': isAnime={IsAnime}, EnableAudioVersions={EnableAudio}, StreamProvider={Provider}",
-            dto.Name, isAnime, config?.EnableAnimeAudioVersions, config?.StreamProvider);
-
-        if (isAnime && config?.EnableAnimeAudioVersions == true && config.StreamProvider == StreamProvider.Direct)
+        if (isAnime && episodeConfig?.EnableAnimeAudioVersions == true && episodeConfig.StreamProvider == StreamProvider.Direct && shouldBePlayable)
         {
-            var audioTracks = config.AnimeAudioTracks?
+            var audioTracks = episodeConfig.AnimeAudioTracks?
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 ?? new[] { "sub", "dub" };
 
@@ -664,7 +730,7 @@ public class SearchResultFactory
                 dto.MediaSources = audioTracks.Select(track =>
                 {
                     // Build the actual stream URL for this audio track
-                    var streamUrl = BuildAnimeStreamUrl(config.DirectAnimeUrlTemplate, dto, series, season, episodeNum, track);
+                    var streamUrl = BuildAnimeStreamUrl(episodeConfig.DirectAnimeUrlTemplate, dto, series, season, episodeNum, track);
 
                     // Generate a valid GUID for the MediaSource ID (client expects GUID format)
                     var sourceId = GenerateMediaSourceGuid(dto.Id, track);

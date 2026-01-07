@@ -54,6 +54,18 @@ public class PersistenceService
             return null;
         }
 
+        // Check release date if CreateUnreleasedMedia is disabled
+        if (!Config.CreateUnreleasedMedia)
+        {
+            var releaseDate = movie.PremiereDate;
+            if (releaseDate == null || releaseDate > DateTime.UtcNow)
+            {
+                _logger.LogDebug("[PersistenceService] Movie not yet released, skipping: {Name} (Release: {Date})",
+                    movie.Name, releaseDate?.ToString("yyyy-MM-dd") ?? "unknown");
+                return null;
+            }
+        }
+
         // Build folder and file paths
         var year = movie.ProductionYear?.ToString() ?? "Unknown";
         var title = SanitizeFileName(movie.Name ?? "Unknown");
@@ -113,6 +125,24 @@ public class PersistenceService
         {
             _logger.LogInformation("[PersistenceService] No episodes found for series: {Name}", series.Name);
             return null;
+        }
+
+        // Filter to only aired episodes if CreateUnreleasedMedia is disabled
+        if (!Config.CreateUnreleasedMedia)
+        {
+            var now = DateTime.UtcNow;
+            episodes = episodes
+                .Where(e => e.PremiereDate.HasValue && e.PremiereDate.Value <= now)
+                .ToList();
+
+            if (episodes.Count == 0)
+            {
+                _logger.LogDebug("[PersistenceService] No aired episodes for series, skipping: {Name}", series.Name);
+                return null;
+            }
+
+            _logger.LogDebug("[PersistenceService] Filtered to {Count} aired episodes for series: {Name}",
+                episodes.Count, series.Name);
         }
 
         // Build folder path
@@ -190,8 +220,8 @@ public class PersistenceService
         if (isAnime)
         {
             var anilistId = series.ProviderIds?.GetValueOrDefault("AniList") ?? seriesIdForUrl;
-            // For anime, use absolute episode number and default to sub
-            strmContent = $"dynamiclibrary://anime/{anilistId}/{episodeNumber}/sub";
+            // Single .strm file - audio version selection happens at playback time via MediaSources
+            strmContent = $"dynamiclibrary://anime/{anilistId}/{episodeNumber}";
         }
         else
         {
@@ -199,7 +229,6 @@ public class PersistenceService
         }
 
         await File.WriteAllTextAsync(filePath, strmContent, cancellationToken);
-
         _logger.LogDebug("[PersistenceService] Created episode: {Path}", filePath);
     }
 
@@ -297,5 +326,127 @@ public class PersistenceService
         {
             _logger.LogError(ex, "[PersistenceService] Failed to trigger library scan");
         }
+    }
+
+    /// <summary>
+    /// Get the folder path for a persisted series.
+    /// </summary>
+    public string GetSeriesFolderPath(BaseItemDto series)
+    {
+        var year = series.ProductionYear?.ToString() ?? "Unknown";
+        var title = SanitizeFileName(series.Name ?? "Unknown");
+        var providerId = GetProviderIdTag(series);
+        var isAnime = DynamicLibraryService.IsAnime(series);
+
+        var subFolder = isAnime ? "anime" : "tv";
+        var folderName = $"{title} ({year}) {providerId}";
+        return Path.Combine(Config.PersistentLibraryPath, subFolder, folderName);
+    }
+
+    /// <summary>
+    /// Check for and persist any new episodes for an existing persisted series.
+    /// </summary>
+    /// <returns>The number of new episodes added.</returns>
+    public async Task<int> UpdateSeriesAsync(BaseItemDto series, CancellationToken cancellationToken = default)
+    {
+        if (series.Type != BaseItemKind.Series)
+        {
+            return 0;
+        }
+
+        // Get cached episodes (already fetched by EnrichSeriesDtoAsync)
+        var cachedEpisodes = _itemCache.GetEpisodesForSeries(series.Id);
+        if (cachedEpisodes == null || cachedEpisodes.Count == 0)
+        {
+            _logger.LogDebug("[PersistenceService] No cached episodes for series: {Name}", series.Name);
+            return 0;
+        }
+
+        // Get series folder path
+        var seriesPath = GetSeriesFolderPath(series);
+        if (!Directory.Exists(seriesPath))
+        {
+            _logger.LogDebug("[PersistenceService] Series not persisted yet: {Name}", series.Name);
+            return 0;
+        }
+
+        // Get existing .strm files on disk
+        var existingFiles = Directory.GetFiles(seriesPath, "*.strm", SearchOption.AllDirectories);
+        var existingEpisodes = ParseExistingEpisodes(existingFiles);
+
+        // Find new episodes (skip specials - season 0, filter to aired only)
+        var now = DateTime.UtcNow;
+        var newEpisodes = cachedEpisodes
+            .Where(e => e.ParentIndexNumber.HasValue && e.ParentIndexNumber > 0)
+            .Where(e => e.IndexNumber.HasValue)
+            .Where(e => e.PremiereDate.HasValue && e.PremiereDate.Value <= now) // Only aired episodes
+            .Where(e => !existingEpisodes.Contains((e.ParentIndexNumber!.Value, e.IndexNumber!.Value)))
+            .ToList();
+
+        if (newEpisodes.Count == 0)
+        {
+            _logger.LogDebug("[PersistenceService] No new episodes for series: {Name}", series.Name);
+            return 0;
+        }
+
+        _logger.LogInformation("[PersistenceService] Found {Count} new episodes for series: {Name}",
+            newEpisodes.Count, series.Name);
+
+        // Get series info for persistence
+        var imdbId = series.ProviderIds?.GetValueOrDefault("Imdb");
+        var tvdbId = series.ProviderIds?.GetValueOrDefault("Tvdb");
+        var seriesIdForUrl = imdbId ?? tvdbId;
+        var isAnime = DynamicLibraryService.IsAnime(series);
+
+        // Persist each new episode
+        foreach (var episode in newEpisodes)
+        {
+            var seasonNumber = episode.ParentIndexNumber!.Value;
+            var seasonFolder = $"Season {seasonNumber:D2}";
+            var seasonPath = Path.Combine(seriesPath, seasonFolder);
+
+            // Create season folder if needed
+            Directory.CreateDirectory(seasonPath);
+
+            await PersistEpisodeAsync(
+                episode,
+                series,
+                seriesPath,
+                seasonPath,
+                seasonNumber,
+                seriesIdForUrl!,
+                isAnime,
+                cancellationToken);
+        }
+
+        _logger.LogInformation("[PersistenceService] Added {Count} new episodes for series: {Name}",
+            newEpisodes.Count, series.Name);
+
+        return newEpisodes.Count;
+    }
+
+    /// <summary>
+    /// Parse existing .strm files to get a set of (season, episode) tuples.
+    /// </summary>
+    private static HashSet<(int Season, int Episode)> ParseExistingEpisodes(string[] files)
+    {
+        var episodes = new HashSet<(int, int)>();
+
+        // Pattern matches "S01E01" or "S1E1" format
+        var regex = new Regex(@"S(\d+)E(\d+)", RegexOptions.IgnoreCase);
+
+        foreach (var file in files)
+        {
+            var fileName = Path.GetFileName(file);
+            var match = regex.Match(fileName);
+            if (match.Success &&
+                int.TryParse(match.Groups[1].Value, out var season) &&
+                int.TryParse(match.Groups[2].Value, out var episode))
+            {
+                episodes.Add((season, episode));
+            }
+        }
+
+        return episodes;
     }
 }

@@ -129,20 +129,89 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
 
                 if (!string.IsNullOrEmpty(dynamicLibraryUrl))
                 {
+                    // Check if we should skip unreleased content
+                    if (!Config.ShowUnreleasedStreams)
+                    {
+                        var premiereDate = libraryItem.PremiereDate;
+                        if (premiereDate == null || premiereDate > DateTime.UtcNow)
+                        {
+                            _logger.LogDebug("[DynamicLibrary] Skipping stream for unreleased persisted content: {Name} (Premiere: {Date})",
+                                libraryItem.Name, premiereDate?.ToString("yyyy-MM-dd") ?? "unknown");
+                            await next();
+                            return;
+                        }
+                    }
+
                     _logger.LogWarning("[DynamicLibrary] PlaybackInfo: Found persisted item {Name} with dynamicLibraryUrl {Url}",
                         libraryItem.Name, dynamicLibraryUrl);
+
+                    // Fetch subtitles for persisted items
+                    List<CachedSubtitle>? subtitles = null;
+                    if (_subtitleService.IsEnabled)
+                    {
+                        subtitles = await FetchSubtitlesForPersistedItemAsync(libraryItem, context.HttpContext.RequestAborted);
+                        _logger.LogDebug("[DynamicLibrary] Fetched {Count} subtitles for persisted item {Name}",
+                            subtitles?.Count ?? 0, libraryItem.Name);
+                    }
+
+                    // Check if this is anime with multiple audio versions enabled
+                    var persistedConfig = Config;
+                    _logger.LogWarning("[DynamicLibrary] Anime check: URL={Url}, IsAnimeUrl={IsAnime}, EnableAudioVersions={Enable}, AudioTracks={Tracks}",
+                        dynamicLibraryUrl,
+                        IsAnimeUrl(dynamicLibraryUrl),
+                        persistedConfig.EnableAnimeAudioVersions,
+                        persistedConfig.AnimeAudioTracks ?? "null");
+
+                    if (IsAnimeUrl(dynamicLibraryUrl) && persistedConfig.EnableAnimeAudioVersions && !string.IsNullOrEmpty(persistedConfig.AnimeAudioTracks))
+                    {
+                        var response = await BuildAnimePlaybackInfoResponseAsync(libraryItem, dynamicLibraryUrl, subtitles, context.HttpContext.RequestAborted);
+                        if (response != null)
+                        {
+                            // Check if a specific MediaSource was requested and filter to that one
+                            var requestedSourceId = GetSelectedMediaSourceId(context);
+                            var itemIdStr = libraryItem.Id.ToString("N");
+
+                            // If client passed episode ID (like Android TV), check for stored selection
+                            if (requestedSourceId == itemIdStr)
+                            {
+                                var storedSelection = _itemCache.GetSelectedMediaSource(libraryItem.Id);
+                                if (!string.IsNullOrEmpty(storedSelection))
+                                {
+                                    _logger.LogWarning("[DynamicLibrary] PlaybackInfoFilter: Client passed episode ID, using stored selection: {StoredId}",
+                                        storedSelection);
+                                    requestedSourceId = storedSelection;
+                                }
+                            }
+
+                            _logger.LogWarning("[DynamicLibrary] PlaybackInfoFilter: requestedSourceId={Requested}, itemIdStr={ItemId}",
+                                requestedSourceId ?? "null", itemIdStr);
+                            if (!string.IsNullOrEmpty(requestedSourceId) && requestedSourceId != itemIdStr && response.MediaSources?.Count > 1)
+                            {
+                                var selected = response.MediaSources.FirstOrDefault(s => s.Id == requestedSourceId);
+                                if (selected != null)
+                                {
+                                    response.MediaSources = new[] { selected };
+                                    _logger.LogWarning("[DynamicLibrary] PlaybackInfoFilter: Filtered to selected MediaSource {Name} (ID: {Id})",
+                                        selected.Name, requestedSourceId);
+                                }
+                                else
+                                {
+                                    _logger.LogWarning("[DynamicLibrary] PlaybackInfoFilter: Selected MediaSource {Id} not found, returning all sources",
+                                        requestedSourceId);
+                                }
+                            }
+
+                            _logger.LogWarning("[DynamicLibrary] PlaybackInfoFilter: Returning anime response with {Count} MediaSources",
+                                response.MediaSources?.Count ?? 0);
+                            context.Result = new OkObjectResult(response);
+                            return;
+                        }
+                    }
+
+                    // Standard single-URL handling
                     var persistedStreamUrl = BuildStreamUrlFromPath(dynamicLibraryUrl);
                     if (!string.IsNullOrEmpty(persistedStreamUrl))
                     {
-                        // Fetch subtitles for persisted items
-                        List<CachedSubtitle>? subtitles = null;
-                        if (_subtitleService.IsEnabled)
-                        {
-                            subtitles = await FetchSubtitlesForPersistedItemAsync(libraryItem, context.HttpContext.RequestAborted);
-                            _logger.LogDebug("[DynamicLibrary] Fetched {Count} subtitles for persisted item {Name}",
-                                subtitles?.Count ?? 0, libraryItem.Name);
-                        }
-
                         var response = await BuildPlaybackInfoResponseFromPathAsync(libraryItem, persistedStreamUrl, subtitles, context.HttpContext.RequestAborted);
                         _logger.LogWarning("[DynamicLibrary] PlaybackInfoFilter: Returning response with URL={Url}, Runtime={Runtime}, DirectPlay={DirectPlay}, DirectStream={DirectStream}",
                             persistedStreamUrl,
@@ -164,6 +233,19 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             cachedItem.Name, itemId);
 
         var config = Config;
+
+        // Check if we should skip unreleased content
+        if (!config.ShowUnreleasedStreams)
+        {
+            var premiereDate = cachedItem.PremiereDate;
+            if (premiereDate == null || premiereDate > DateTime.UtcNow)
+            {
+                _logger.LogDebug("[DynamicLibrary] Skipping stream for unreleased dynamic content: {Name} (Premiere: {Date})",
+                    cachedItem.Name, premiereDate?.ToString("yyyy-MM-dd") ?? "unknown");
+                await next();
+                return;
+            }
+        }
 
         // Extract selected mediaSourceId from request (query string or body)
         var selectedMediaSourceId = GetSelectedMediaSourceId(context);
@@ -819,6 +901,124 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
     }
 
     /// <summary>
+    /// Check if a dynamiclibrary:// URL is for anime content.
+    /// </summary>
+    private static bool IsAnimeUrl(string path)
+    {
+        return path.StartsWith("dynamiclibrary://anime/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Build PlaybackInfoResponse for a persisted anime item with multiple audio versions.
+    /// Returns multiple MediaSources (SUB, DUB, etc.) for version selector in player.
+    /// </summary>
+    private async Task<PlaybackInfoResponse?> BuildAnimePlaybackInfoResponseAsync(
+        BaseItem item,
+        string dynamicLibraryUrl,
+        List<CachedSubtitle>? subtitles,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var uri = new Uri(dynamicLibraryUrl);
+            var segments = uri.AbsolutePath.Trim('/').Split('/');
+
+            if (segments.Length < 2)
+            {
+                _logger.LogWarning("[DynamicLibrary] Invalid anime URL format: {Url}", dynamicLibraryUrl);
+                return null;
+            }
+
+            var anilistId = segments[0];
+            var episodeNum = segments[1];
+
+            var config = Config;
+            var template = config.DirectAnimeUrlTemplate;
+            if (string.IsNullOrEmpty(template))
+            {
+                _logger.LogWarning("[DynamicLibrary] DirectAnimeUrlTemplate is not configured");
+                return null;
+            }
+
+            // Build subtitle streams
+            var subtitleStreams = BuildSubtitleMediaStreams(item.Id, item.Id.ToString("N"), subtitles);
+
+            // Get runtime from API
+            var runTimeTicks = await GetRuntimeForPersistedItemAsync(item, cancellationToken);
+
+            // Parse audio tracks from config
+            var audioTracks = config.AnimeAudioTracks
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            if (audioTracks.Length == 0)
+            {
+                audioTracks = new[] { "sub", "dub" };
+            }
+
+            // Build MediaSource for each audio track
+            var mediaSources = audioTracks.Select(track =>
+            {
+                var streamUrl = template
+                    .Replace("{id}", anilistId, StringComparison.OrdinalIgnoreCase)
+                    .Replace("{anilist}", anilistId, StringComparison.OrdinalIgnoreCase)
+                    .Replace("{episode}", episodeNum, StringComparison.OrdinalIgnoreCase)
+                    .Replace("{absolute}", episodeNum, StringComparison.OrdinalIgnoreCase)
+                    .Replace("{audio}", track.ToLowerInvariant(), StringComparison.OrdinalIgnoreCase);
+
+                // Generate unique ID for this MediaSource
+                var sourceId = GeneratePersistedAnimeMediaSourceId(item.Id, track);
+
+                _logger.LogDebug("[DynamicLibrary] Built anime MediaSource for '{Name}' ({Track}): {Url}",
+                    item.Name, track, streamUrl);
+
+                return new MediaSourceInfo
+                {
+                    Id = sourceId,
+                    Name = track.ToUpperInvariant(),  // "SUB", "DUB" shown in version selector
+                    Path = streamUrl,
+                    Protocol = MediaProtocol.Http,
+                    Type = MediaSourceType.Default,
+                    Container = "hls",
+                    IsRemote = true,
+                    SupportsDirectPlay = true,
+                    SupportsDirectStream = false,
+                    SupportsTranscoding = false,
+                    SupportsProbing = false,
+                    RequiresOpening = false,
+                    RequiresClosing = false,
+                    RunTimeTicks = runTimeTicks,
+                    MediaStreams = subtitleStreams.Count > 0 ? subtitleStreams : new List<MediaStream>()
+                };
+            }).ToArray();
+
+            _logger.LogDebug("[DynamicLibrary] Built {Count} MediaSources for anime episode {Name}",
+                mediaSources.Length, item.Name);
+
+            return new PlaybackInfoResponse
+            {
+                MediaSources = mediaSources,
+                PlaySessionId = Guid.NewGuid().ToString("N")
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[DynamicLibrary] Error building anime playback info: {Url}", dynamicLibraryUrl);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Generate a deterministic ID for a persisted anime MediaSource.
+    /// </summary>
+    private static string GeneratePersistedAnimeMediaSourceId(Guid itemId, string audioTrack)
+    {
+        var input = $"persisted:{itemId:N}:{audioTrack.ToLowerInvariant()}";
+        using var md5 = System.Security.Cryptography.MD5.Create();
+        var hash = md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes(input));
+        return new Guid(hash).ToString("N");
+    }
+
+    /// <summary>
     /// Parse a DynamicLibrary placeholder URL and build the actual stream URL.
     /// Format: dynamiclibrary://movie/{id}
     ///         dynamiclibrary://tv/{id}/{season}/{episode}
@@ -866,6 +1066,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                     .Replace("{id}", segments[0], StringComparison.OrdinalIgnoreCase)
                     .Replace("{anilist}", segments[0], StringComparison.OrdinalIgnoreCase)
                     .Replace("{episode}", segments[1], StringComparison.OrdinalIgnoreCase)
+                    .Replace("{absolute}", segments[1], StringComparison.OrdinalIgnoreCase)
                     .Replace("{audio}", audio, StringComparison.OrdinalIgnoreCase);
             }
 
@@ -961,8 +1162,21 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         }
 
         // Try TVDB (TV shows/episodes)
-        if (item.ProviderIds?.TryGetValue("Tvdb", out var tvdbId) == true &&
-            int.TryParse(tvdbId, out var tvdbIdInt))
+        // For episodes, we need the SERIES TVDB ID (not episode ID) for the API call
+        string? tvdbSeriesId = null;
+        if (item is Episode episode)
+        {
+            // Get series TVDB ID from the parent series
+            var series = _libraryManager.GetItemById(episode.SeriesId);
+            tvdbSeriesId = series?.ProviderIds?.GetValueOrDefault("Tvdb");
+        }
+        else
+        {
+            // For series items, use the item's own TVDB ID
+            tvdbSeriesId = item.ProviderIds?.GetValueOrDefault("Tvdb");
+        }
+
+        if (!string.IsNullOrEmpty(tvdbSeriesId) && int.TryParse(tvdbSeriesId, out var tvdbIdInt))
         {
             // Try cache first
             var cached = _itemCache.GetItem(DynamicUri.FromTvdb(tvdbIdInt).ToGuid());

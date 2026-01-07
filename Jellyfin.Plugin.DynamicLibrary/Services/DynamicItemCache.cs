@@ -24,6 +24,7 @@ public class DynamicItemCache
     private const string EmbedarrAddedPrefix = "embedarr_added:";
     private const string MediaSourcePrefix = "mediasource_to_episode:";
     private const string SubtitlesPrefix = "dynamic_subtitles:";
+    private const string SelectedMediaSourcePrefix = "selected_mediasource:";
 
     public DynamicItemCache(IMemoryCache cache, ILogger<DynamicItemCache> logger)
     {
@@ -214,5 +215,27 @@ public class DynamicItemCache
         var subtitles = GetSubtitles(itemId);
         return subtitles?.FirstOrDefault(s =>
             s.LanguageCode.Equals(languageCode, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Store the selected MediaSource ID for an episode.
+    /// This is used for clients like Android TV that pass the episode ID instead of
+    /// the selected MediaSource ID when requesting playback.
+    /// </summary>
+    public void StoreSelectedMediaSource(Guid episodeId, string mediaSourceId)
+    {
+        var key = $"{SelectedMediaSourcePrefix}{episodeId:N}";
+        _cache.Set(key, mediaSourceId, TimeSpan.FromMinutes(5)); // Short TTL - only needs to last until playback starts
+        _logger.LogDebug("[DynamicItemCache] Stored selected MediaSource for episode {EpisodeId}: {MediaSourceId}",
+            episodeId, mediaSourceId);
+    }
+
+    /// <summary>
+    /// Get the selected MediaSource ID for an episode.
+    /// </summary>
+    public string? GetSelectedMediaSource(Guid episodeId)
+    {
+        var key = $"{SelectedMediaSourcePrefix}{episodeId:N}";
+        return _cache.TryGetValue<string>(key, out var mediaSourceId) ? mediaSourceId : null;
     }
 }

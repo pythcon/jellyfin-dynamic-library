@@ -219,6 +219,17 @@
 
             <div class="checkboxContainer checkboxContainer-withDescription">
               <label>
+                <input is="emby-checkbox" type="checkbox" id="chkShowUnreleasedStreams" />
+                <span>Show unreleased streams</span>
+              </label>
+              <div class="fieldDescription">
+                When enabled, generates stream URLs even for movies or episodes that haven't been released yet.
+                When disabled (default), unreleased content cannot be played.
+              </div>
+            </div>
+
+            <div class="checkboxContainer checkboxContainer-withDescription">
+              <label>
                 <input is="emby-checkbox" type="checkbox" id="chkEnableAnimeAudioVersions" />
                 <span>Enable Audio Track Selection</span>
               </label>
@@ -396,6 +407,28 @@
                   Automatically trigger a library scan after creating new items.
                 </div>
               </div>
+
+              <div class="checkboxContainer checkboxContainer-withDescription">
+                <label>
+                  <input is="emby-checkbox" type="checkbox" id="chkCreateUnreleasedMedia" />
+                  <span>Create unreleased media</span>
+                </label>
+                <div class="fieldDescription">
+                  When enabled, creates persistent media even for movies and shows that haven't been released yet.
+                  When disabled (default), only creates media for content that has been released.
+                </div>
+              </div>
+
+              <div class="checkboxContainer checkboxContainer-withDescription">
+                <label>
+                  <input is="emby-checkbox" type="checkbox" id="chkCheckForUpdatesOnView" />
+                  <span>Check for updates on view</span>
+                </label>
+                <div class="fieldDescription">
+                  When viewing persisted media, check for updates: new aired episodes for TV/anime,
+                  or create movie .strm if it has now been released.
+                </div>
+              </div>
             </div>
           </div>
 
@@ -441,6 +474,7 @@
         const txtDirectMovieUrl = document.querySelector('#txtDirectMovieUrl');
         const txtDirectTvUrl = document.querySelector('#txtDirectTvUrl');
         const txtDirectAnimeUrl = document.querySelector('#txtDirectAnimeUrl');
+        const chkShowUnreleasedStreams = document.querySelector('#chkShowUnreleasedStreams');
         const chkEnableAnimeAudioVersions = document.querySelector('#chkEnableAnimeAudioVersions');
         const txtAnimeAudioTracks = document.querySelector('#txtAnimeAudioTracks');
         const animeAudioTracksContainer = document.querySelector('#animeAudioTracksContainer');
@@ -458,6 +492,8 @@
         const chkEnablePersistence = document.querySelector('#chkEnablePersistence');
         const txtPersistentLibraryPath = document.querySelector('#txtPersistentLibraryPath');
         const chkTriggerLibraryScan = document.querySelector('#chkTriggerLibraryScan');
+        const chkCreateUnreleasedMedia = document.querySelector('#chkCreateUnreleasedMedia');
+        const chkCheckForUpdatesOnView = document.querySelector('#chkCheckForUpdatesOnView');
         const persistenceSettingsContainer = document.querySelector('#persistenceSettings');
         const moviesPathSpan = document.querySelector('#moviesPath');
         const showsPathSpan = document.querySelector('#showsPath');
@@ -556,6 +592,7 @@
             txtDirectMovieUrl.value = config.DirectMovieUrlTemplate || '';
             txtDirectTvUrl.value = config.DirectTvUrlTemplate || '';
             txtDirectAnimeUrl.value = config.DirectAnimeUrlTemplate || '';
+            chkShowUnreleasedStreams.checked = config.ShowUnreleasedStreams ?? false;
             chkEnableAnimeAudioVersions.checked = config.EnableAnimeAudioVersions ?? false;
             txtAnimeAudioTracks.value = config.AnimeAudioTracks || 'sub,dub';
 
@@ -571,6 +608,8 @@
             chkEnablePersistence.checked = config.EnablePersistence ?? false;
             txtPersistentLibraryPath.value = config.PersistentLibraryPath || '/dynamic-library';
             chkTriggerLibraryScan.checked = config.TriggerLibraryScan ?? true;
+            chkCreateUnreleasedMedia.checked = config.CreateUnreleasedMedia ?? false;
+            chkCheckForUpdatesOnView.checked = config.CheckForUpdatesOnView ?? true;
 
             // Select dropdowns - use helper to handle custom element timing
             // Enum values come as strings from C# JSON serialization
@@ -622,6 +661,7 @@
             config.DirectMovieUrlTemplate = txtDirectMovieUrl.value.trim();
             config.DirectTvUrlTemplate = txtDirectTvUrl.value.trim();
             config.DirectAnimeUrlTemplate = txtDirectAnimeUrl.value.trim();
+            config.ShowUnreleasedStreams = chkShowUnreleasedStreams.checked;
             config.EnableAnimeAudioVersions = chkEnableAnimeAudioVersions.checked;
             config.AnimeAudioTracks = txtAnimeAudioTracks.value.trim() || 'sub,dub';
 
@@ -637,6 +677,8 @@
             config.EnablePersistence = chkEnablePersistence.checked;
             config.PersistentLibraryPath = txtPersistentLibraryPath.value.trim() || '/dynamic-library';
             config.TriggerLibraryScan = chkTriggerLibraryScan.checked;
+            config.CreateUnreleasedMedia = chkCreateUnreleasedMedia.checked;
+            config.CheckForUpdatesOnView = chkCheckForUpdatesOnView.checked;
 
             // Select dropdowns - enum values are serialized as strings
             config.StreamProvider = selStreamProvider.value;
