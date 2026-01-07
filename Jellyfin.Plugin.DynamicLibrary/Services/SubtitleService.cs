@@ -89,6 +89,7 @@ public class SubtitleService
     {
         if (!IsEnabled)
         {
+            _logger.LogDebug("[DynamicLibrary] Subtitles: Disabled or not configured, skipping for '{Name}'", movie.Name);
             return new List<CachedSubtitle>();
         }
 
@@ -104,17 +105,19 @@ public class SubtitleService
         var imdbId = movie.ProviderIds?.GetValueOrDefault("Imdb");
         if (string.IsNullOrEmpty(imdbId))
         {
-            _logger.LogDebug("[SubtitleService] No IMDB ID for movie: {Name}", movie.Name);
+            _logger.LogInformation("[DynamicLibrary] Subtitles: No IMDB ID for movie '{Name}' - cannot search OpenSubtitles", movie.Name);
             return new List<CachedSubtitle>();
         }
 
         var languages = GetLanguages();
-        _logger.LogDebug("[SubtitleService] Fetching subtitles for movie: {Name} ({ImdbId}), languages: {Languages}",
+        _logger.LogInformation("[DynamicLibrary] Subtitles: Searching for movie '{Name}' (IMDB: {ImdbId}), languages: {Languages}",
             movie.Name, imdbId, string.Join(",", languages));
 
         var results = await _openSubtitlesClient.SearchMovieSubtitlesAsync(imdbId, languages, cancellationToken);
+        _logger.LogInformation("[DynamicLibrary] Subtitles: OpenSubtitles returned {Count} results for '{Name}'", results.Count, movie.Name);
 
         var subtitles = await ProcessSearchResultsAsync(movie.Id, results, languages, cancellationToken);
+        _logger.LogInformation("[DynamicLibrary] Subtitles: Processed {Count} subtitle(s) for '{Name}'", subtitles.Count, movie.Name);
 
         _itemCache.StoreSubtitles(movie.Id, subtitles);
         return subtitles;
@@ -185,7 +188,7 @@ public class SubtitleService
             // Find top N subtitles for this language (highest download count, prefer non-machine translated)
             var humanResults = results
                 .Where(r => r.Attributes.Language.Equals(language, StringComparison.OrdinalIgnoreCase))
-                .Where(r => !r.Attributes.MachineTranslated)
+                .Where(r => r.Attributes.MachineTranslated != true)
                 .OrderByDescending(r => r.Attributes.DownloadCount)
                 .Take(maxPerLanguage)
                 .ToList();
@@ -195,7 +198,7 @@ public class SubtitleService
             {
                 var machineResults = results
                     .Where(r => r.Attributes.Language.Equals(language, StringComparison.OrdinalIgnoreCase))
-                    .Where(r => r.Attributes.MachineTranslated)
+                    .Where(r => r.Attributes.MachineTranslated == true)
                     .OrderByDescending(r => r.Attributes.DownloadCount)
                     .Take(maxPerLanguage - humanResults.Count)
                     .ToList();
@@ -233,7 +236,7 @@ public class SubtitleService
                         LanguageCode = maxPerLanguage > 1 ? $"{language}_{i}" : language,
                         FilePath = filePath,
                         CachedAt = File.GetLastWriteTimeUtc(filePath),
-                        HearingImpaired = result.Attributes.HearingImpaired
+                        HearingImpaired = result.Attributes.HearingImpaired ?? false
                     });
                     continue;
                 }
@@ -267,7 +270,7 @@ public class SubtitleService
                     LanguageCode = maxPerLanguage > 1 ? $"{language}_{i}" : language,
                     FilePath = filePath,
                     CachedAt = DateTime.UtcNow,
-                    HearingImpaired = result.Attributes.HearingImpaired
+                    HearingImpaired = result.Attributes.HearingImpaired ?? false
                 });
 
                 _logger.LogDebug("[SubtitleService] Downloaded and converted subtitle: {Language} ({Index})", language, i + 1);

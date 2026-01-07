@@ -41,7 +41,7 @@ public class OpenSubtitlesAttributes
     public int DownloadCount { get; set; }
 
     [JsonPropertyName("hearing_impaired")]
-    public bool HearingImpaired { get; set; }
+    public bool? HearingImpaired { get; set; }
 
     [JsonPropertyName("fps")]
     public double Fps { get; set; }
@@ -53,16 +53,16 @@ public class OpenSubtitlesAttributes
     public double Ratings { get; set; }
 
     [JsonPropertyName("from_trusted")]
-    public bool FromTrusted { get; set; }
+    public bool? FromTrusted { get; set; }
 
     [JsonPropertyName("foreign_parts_only")]
-    public bool ForeignPartsOnly { get; set; }
+    public bool? ForeignPartsOnly { get; set; }
 
     [JsonPropertyName("ai_translated")]
-    public bool AiTranslated { get; set; }
+    public bool? AiTranslated { get; set; }
 
     [JsonPropertyName("machine_translated")]
-    public bool MachineTranslated { get; set; }
+    public bool? MachineTranslated { get; set; }
 
     [JsonPropertyName("release")]
     public string? Release { get; set; }
