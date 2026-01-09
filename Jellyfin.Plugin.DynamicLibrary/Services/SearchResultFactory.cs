@@ -439,8 +439,11 @@ public class SearchResultFactory
         // Store series in cache BEFORE creating episodes (so episodes can look it up with all provider IDs)
         _itemCache.StoreItem(dto, _itemCache.GetImageUrl(dto.Id));
 
+        // Get series IMDB ID to pass to episodes
+        var seriesImdbId = dto.ProviderIds?.TryGetValue("Imdb", out var imdb) == true ? imdb : null;
+
         // Create seasons and episodes (with translations if language override enabled)
-        await CreateSeasonsAndEpisodesAsync(details, dto.Id, dto.Name ?? "Unknown Series", languageCode, isAnime, cancellationToken);
+        await CreateSeasonsAndEpisodesAsync(details, dto.Id, dto.Name ?? "Unknown Series", languageCode, isAnime, seriesImdbId, cancellationToken);
 
         return dto;
     }
@@ -616,7 +619,7 @@ public class SearchResultFactory
     /// <summary>
     /// Create an Episode DTO from TVDB episode data.
     /// </summary>
-    public BaseItemDto CreateEpisodeDto(TvdbEpisode episode, Guid seriesId, string seriesName, Guid seasonId, TvdbTranslationData? translation = null, int? absoluteNumber = null, bool isAnime = false)
+    public BaseItemDto CreateEpisodeDto(TvdbEpisode episode, Guid seriesId, string seriesName, Guid seasonId, TvdbTranslationData? translation = null, int? absoluteNumber = null, bool isAnime = false, string? seriesImdbId = null)
     {
         var episodeId = GenerateGuid($"tvdb:episode:{episode.Id}");
         var episodeConfig = DynamicLibraryPlugin.Instance?.Configuration;
@@ -660,12 +663,7 @@ public class SearchResultFactory
             SeriesName = seriesName,
             PremiereDate = premiereDate,
             ProductionYear = productionYear,
-            ProviderIds = new Dictionary<string, string>
-            {
-                { "Tvdb", episode.Id.ToString() },
-                { DynamicLibraryProviderId, $"episode:{episode.Id}" },
-                { "AbsoluteNumber", absoluteNumber?.ToString() ?? "" }
-            },
+            ProviderIds = BuildEpisodeProviderIds(episode.Id, absoluteNumber, seriesImdbId),
             UserData = new UserItemDataDto
             {
                 Key = $"tvdb:episode:{episode.Id}",
@@ -775,6 +773,28 @@ public class SearchResultFactory
     }
 
     /// <summary>
+    /// Build the provider IDs dictionary for an episode, including the series IMDB ID for streaming lookups.
+    /// </summary>
+    private Dictionary<string, string> BuildEpisodeProviderIds(int tvdbEpisodeId, int? absoluteNumber, string? seriesImdbId)
+    {
+        var providerIds = new Dictionary<string, string>
+        {
+            { "Tvdb", tvdbEpisodeId.ToString() },
+            { DynamicLibraryProviderId, $"episode:{tvdbEpisodeId}" },
+            { "AbsoluteNumber", absoluteNumber?.ToString() ?? "" }
+        };
+
+        // Store series IMDB ID in episode for streaming lookups (AIOStreams, Embedarr, etc.)
+        // This ensures the series IMDB is available even if the series isn't in cache
+        if (!string.IsNullOrEmpty(seriesImdbId))
+        {
+            providerIds["SeriesImdb"] = seriesImdbId;
+        }
+
+        return providerIds;
+    }
+
+    /// <summary>
     /// Generate a deterministic GUID for a MediaSource based on episode ID and audio track.
     /// This ensures the client gets a valid GUID format for the MediaSource ID.
     /// </summary>
@@ -861,6 +881,7 @@ public class SearchResultFactory
         string seriesName,
         string? languageCode,
         bool isAnime = false,
+        string? seriesImdbId = null,
         CancellationToken cancellationToken = default)
     {
         if (details.Seasons == null || details.Seasons.Count == 0)
@@ -973,7 +994,7 @@ public class SearchResultFactory
                 int absoluteNumber = episode.AbsoluteNumber
                     ?? (GetCumulativeEpisodeCount(episodeCountBySeason, episode.SeasonNumber) + episode.Number);
 
-                var episodeDto = CreateEpisodeDto(episode, seriesId, seriesName, seasonId, translation, absoluteNumber, isAnime);
+                var episodeDto = CreateEpisodeDto(episode, seriesId, seriesName, seasonId, translation, absoluteNumber, isAnime, seriesImdbId);
                 episodeDtos.Add(episodeDto);
             }
 

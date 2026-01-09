@@ -1147,16 +1147,12 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
 
     /// <summary>
     /// Get the IMDB ID from a library item, checking item and series provider IDs.
+    /// For episodes, always prefer the series IMDB ID (required for streaming APIs).
     /// </summary>
     private string? GetImdbIdFromLibraryItem(MediaBrowser.Controller.Entities.BaseItem item)
     {
-        // Try item's IMDB ID first
-        if (item.ProviderIds?.TryGetValue("Imdb", out var imdbId) == true && !string.IsNullOrEmpty(imdbId))
-        {
-            return imdbId;
-        }
-
-        // For episodes, try the series IMDB ID
+        // For episodes, ALWAYS check series IMDB first (required for streaming APIs)
+        // Episode items can have episode-level IMDB IDs which don't work with streaming services
         if (item is Episode episode && episode.SeriesId != Guid.Empty)
         {
             var series = _libraryManager.GetItemById(episode.SeriesId);
@@ -1166,36 +1162,52 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
             }
         }
 
-        return null;
-    }
-
-    /// <summary>
-    /// Get the IMDB ID for an item, checking both item and series provider IDs.
-    /// </summary>
-    private string? GetImdbIdForItem(BaseItemDto item)
-    {
-        // Try item's IMDB ID first
+        // For non-episodes, or if series IMDB not found, use item's own IMDB
         if (item.ProviderIds?.TryGetValue("Imdb", out var imdbId) == true && !string.IsNullOrEmpty(imdbId))
         {
             return imdbId;
         }
 
-        // For episodes, try the series IMDB ID from cache first
-        if (item.Type == BaseItemKind.Episode && item.SeriesId.HasValue)
+        return null;
+    }
+
+    /// <summary>
+    /// Get the IMDB ID for an item, checking both item and series provider IDs.
+    /// For episodes, always prefer the series IMDB ID (required for AIOStreams).
+    /// </summary>
+    private string? GetImdbIdForItem(BaseItemDto item)
+    {
+        // For episodes, ALWAYS prefer series IMDB ID (required for AIOStreams)
+        if (item.Type == BaseItemKind.Episode)
         {
-            // Check cache first
-            var series = _itemCache.GetItem(item.SeriesId.Value);
-            if (series?.ProviderIds?.TryGetValue("Imdb", out var seriesImdbId) == true && !string.IsNullOrEmpty(seriesImdbId))
+            // First check if episode has SeriesImdb stored directly (most reliable)
+            if (item.ProviderIds?.TryGetValue("SeriesImdb", out var storedSeriesImdb) == true && !string.IsNullOrEmpty(storedSeriesImdb))
             {
-                return seriesImdbId;
+                return storedSeriesImdb;
             }
 
-            // Fall back to library lookup
-            var librarySeries = _libraryManager.GetItemById(item.SeriesId.Value);
-            if (librarySeries?.ProviderIds?.TryGetValue("Imdb", out var librarySeriesImdbId) == true && !string.IsNullOrEmpty(librarySeriesImdbId))
+            // Fall back to cache lookup if episode doesn't have SeriesImdb
+            if (item.SeriesId.HasValue)
             {
-                return librarySeriesImdbId;
+                var series = _itemCache.GetItem(item.SeriesId.Value);
+                if (series?.ProviderIds?.TryGetValue("Imdb", out var seriesImdbId) == true && !string.IsNullOrEmpty(seriesImdbId))
+                {
+                    return seriesImdbId;
+                }
+
+                // Fall back to library lookup
+                var librarySeries = _libraryManager.GetItemById(item.SeriesId.Value);
+                if (librarySeries?.ProviderIds?.TryGetValue("Imdb", out var librarySeriesImdbId) == true && !string.IsNullOrEmpty(librarySeriesImdbId))
+                {
+                    return librarySeriesImdbId;
+                }
             }
+        }
+
+        // For non-episodes, or if series IMDB not found, try item's own IMDB ID
+        if (item.ProviderIds?.TryGetValue("Imdb", out var imdbId) == true && !string.IsNullOrEmpty(imdbId))
+        {
+            return imdbId;
         }
 
         return null;

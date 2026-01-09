@@ -1,8 +1,10 @@
 using Jellyfin.Plugin.DynamicLibrary.Api;
 using Jellyfin.Plugin.DynamicLibrary.Filters;
+using Jellyfin.Plugin.DynamicLibrary.ScheduledTasks;
 using Jellyfin.Plugin.DynamicLibrary.Services;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
+using MediaBrowser.Model.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
@@ -60,5 +62,9 @@ public class ServiceRegistrator : IPluginServiceRegistrator
             options.Filters.AddService<SubtitleFilter>(order: 0);               // Handle subtitles for dynamic items
             options.Filters.AddService<SearchActionFilter>(order: 1);
         });
+
+        // Register scheduled tasks
+        services.AddSingleton<IScheduledTask, CacheCleanupTask>();
+        services.AddSingleton<IScheduledTask, ApiHealthCheckTask>();
     }
 }

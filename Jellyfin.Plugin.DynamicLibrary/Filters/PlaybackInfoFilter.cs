@@ -102,7 +102,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                 _logger.LogInformation("[DynamicLibrary] PlaybackInfoFilter: Found AIOStreams mapping for {MediaSourceId}, returning stream URL",
                     selectedMediaSourceId);
 
-                var response = BuildAIOStreamsDirectResponse(itemId, aioStreamUrl, selectedMediaSourceId);
+                var response = await BuildAIOStreamsDirectResponseAsync(itemId, aioStreamUrl, selectedMediaSourceId, context.HttpContext.RequestAborted);
                 context.Result = new OkObjectResult(response);
                 return;
             }
@@ -698,15 +698,14 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
     /// <summary>
     /// Get the series ID for an episode based on preference with fallback.
     /// TV/Anime can have: IMDB, TVDB, TMDB
+    /// For IMDB, we NEVER return episode.ProviderIds["Imdb"] as it could be an episode-specific IMDB ID.
     /// </summary>
     private (string? Id, string IdType) GetSeriesId(BaseItemDto episode, BaseItemDto? series, PreferredProviderId preference)
     {
-        // Try to get IDs from series first (preferred), then from episode
-        var providerIds = series?.ProviderIds ?? episode.ProviderIds;
-
-        if (providerIds == null)
+        // For IMDB preference, first check if episode has SeriesImdb stored (most reliable)
+        if (preference == PreferredProviderId.Imdb && episode.ProviderIds?.TryGetValue("SeriesImdb", out var storedSeriesImdb) == true && !string.IsNullOrEmpty(storedSeriesImdb))
         {
-            return (null, "none");
+            return (storedSeriesImdb, "IMDB");
         }
 
         // Try preferred ID first, then fall back to others
@@ -721,9 +720,32 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
 
         foreach (var provider in fallbackOrder)
         {
-            if (providerIds.TryGetValue(provider, out var id) && !string.IsNullOrEmpty(id))
+            // For IMDB: ONLY use SeriesImdb or series.ProviderIds - NEVER episode.ProviderIds["Imdb"]
+            // because TVDB sometimes returns episode-level IMDB IDs which we don't want
+            if (provider == "Imdb")
             {
-                return (id, provider.ToUpperInvariant());
+                // Check SeriesImdb first (stored in episode during creation)
+                if (episode.ProviderIds?.TryGetValue("SeriesImdb", out var seriesImdb) == true && !string.IsNullOrEmpty(seriesImdb))
+                {
+                    return (seriesImdb, "IMDB");
+                }
+                // Only check series provider IDs, NOT episode provider IDs
+                if (series?.ProviderIds?.TryGetValue("Imdb", out var seriesProviderImdb) == true && !string.IsNullOrEmpty(seriesProviderImdb))
+                {
+                    return (seriesProviderImdb, "IMDB");
+                }
+                // Skip to next provider type - explicitly don't check episode.ProviderIds["Imdb"]
+                continue;
+            }
+
+            // For non-IMDB providers, check series first, then episode
+            if (series?.ProviderIds?.TryGetValue(provider, out var seriesId) == true && !string.IsNullOrEmpty(seriesId))
+            {
+                return (seriesId, provider.ToUpperInvariant());
+            }
+            if (episode.ProviderIds?.TryGetValue(provider, out var episodeId) == true && !string.IsNullOrEmpty(episodeId))
+            {
+                return (episodeId, provider.ToUpperInvariant());
             }
         }
 
@@ -1807,16 +1829,12 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
 
     /// <summary>
     /// Get the IMDB ID from a library item, checking item and series provider IDs.
+    /// For episodes, always prefer the series IMDB ID (required for streaming APIs).
     /// </summary>
     private string? GetImdbIdFromLibraryItem(MediaBrowser.Controller.Entities.BaseItem item)
     {
-        // Try item's IMDB ID first
-        if (item.ProviderIds?.TryGetValue("Imdb", out var imdbId) == true && !string.IsNullOrEmpty(imdbId))
-        {
-            return imdbId;
-        }
-
-        // For episodes, try the series IMDB ID
+        // For episodes, ALWAYS check series IMDB first (required for streaming APIs)
+        // Episode items can have episode-level IMDB IDs which don't work with streaming services
         if (item is Episode episode && episode.SeriesId != Guid.Empty)
         {
             var series = _libraryManager.GetItemById(episode.SeriesId);
@@ -1824,6 +1842,12 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             {
                 return seriesImdbId;
             }
+        }
+
+        // For non-episodes, or if series IMDB not found, use item's own IMDB
+        if (item.ProviderIds?.TryGetValue("Imdb", out var imdbId) == true && !string.IsNullOrEmpty(imdbId))
+        {
+            return imdbId;
         }
 
         return null;
@@ -1880,13 +1904,13 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
     /// Build a PlaybackInfoResponse directly from AIOStreams stream URL mapping.
     /// Used when the item isn't in cache but we have the MediaSource → URL mapping.
     /// </summary>
-    private PlaybackInfoResponse BuildAIOStreamsDirectResponse(Guid itemId, string streamUrl, string mediaSourceId)
+    private async Task<PlaybackInfoResponse> BuildAIOStreamsDirectResponseAsync(Guid itemId, string streamUrl, string mediaSourceId, CancellationToken cancellationToken)
     {
         // Get the mapping to retrieve filename hint for container detection
         var mapping = _itemCache.GetAIOStreamsMapping(mediaSourceId);
         var container = StreamContainerHelper.DetectContainer(streamUrl, mapping?.Filename);
 
-        // Try to get runtime from library item, otherwise use default
+        // Try to get runtime from library item or API
         // This is critical for Android TV which won't play without RunTimeTicks
         long? runTimeTicks = null;
         string itemName = "Stream";
@@ -1894,19 +1918,20 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         var libraryItem = _libraryManager.GetItemById(itemId);
         if (libraryItem != null)
         {
-            runTimeTicks = libraryItem.RunTimeTicks;
             itemName = libraryItem.Name;
-            _logger.LogInformation("[DynamicLibrary] BuildAIOStreamsDirectResponse: Library item {Name} has RunTimeTicks={Ticks}",
+            // Use the async method that queries TVDB/TMDB APIs for runtime
+            runTimeTicks = await GetRuntimeForPersistedItemAsync(libraryItem, cancellationToken);
+            _logger.LogInformation("[DynamicLibrary] BuildAIOStreamsDirectResponseAsync: Library item {Name} has RunTimeTicks={Ticks} (from API lookup)",
                 itemName, runTimeTicks);
         }
 
-        // Fallback to default duration if we don't have a runtime
+        // Fallback to default duration if API lookup failed or no library item
         if (!runTimeTicks.HasValue || runTimeTicks.Value <= 0)
         {
-            // Default to 2 hours for movies (most common case for direct mapping)
-            var defaultMinutes = 120;
+            // Use smart defaults based on item type
+            var defaultMinutes = libraryItem is MediaBrowser.Controller.Entities.TV.Episode ? 24 : 120;
             runTimeTicks = defaultMinutes * 60L * 10_000_000L;
-            _logger.LogInformation("[DynamicLibrary] BuildAIOStreamsDirectResponse: Using default runtime {Minutes} min for {Name}",
+            _logger.LogWarning("[DynamicLibrary] BuildAIOStreamsDirectResponseAsync: Using fallback runtime {Minutes} min for {Name}",
                 defaultMinutes, itemName);
         }
 
@@ -1950,23 +1975,34 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
 
     /// <summary>
     /// Get the IMDB ID for an item, checking both item and series provider IDs.
+    /// For episodes, always prefer the series IMDB ID (required for AIOStreams).
     /// </summary>
     private string? GetImdbIdForItem(BaseItemDto item)
     {
-        // Try item's IMDB ID first
+        // For episodes, ALWAYS prefer series IMDB ID (required for AIOStreams)
+        if (item.Type == BaseItemKind.Episode)
+        {
+            // First check if episode has SeriesImdb stored directly (most reliable)
+            if (item.ProviderIds?.TryGetValue("SeriesImdb", out var storedSeriesImdb) == true && !string.IsNullOrEmpty(storedSeriesImdb))
+            {
+                return storedSeriesImdb;
+            }
+
+            // Fall back to cache lookup if episode doesn't have SeriesImdb
+            if (item.SeriesId.HasValue)
+            {
+                var series = _itemCache.GetItem(item.SeriesId.Value);
+                if (series?.ProviderIds?.TryGetValue("Imdb", out var seriesImdbId) == true && !string.IsNullOrEmpty(seriesImdbId))
+                {
+                    return seriesImdbId;
+                }
+            }
+        }
+
+        // For non-episodes, or if series IMDB not found, try item's own IMDB ID
         if (item.ProviderIds?.TryGetValue("Imdb", out var imdbId) == true && !string.IsNullOrEmpty(imdbId))
         {
             return imdbId;
-        }
-
-        // For episodes, try the series IMDB ID
-        if (item.Type == BaseItemKind.Episode && item.SeriesId.HasValue)
-        {
-            var series = _itemCache.GetItem(item.SeriesId.Value);
-            if (series?.ProviderIds?.TryGetValue("Imdb", out var seriesImdbId) == true && !string.IsNullOrEmpty(seriesImdbId))
-            {
-                return seriesImdbId;
-            }
         }
 
         return null;
