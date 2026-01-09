@@ -30,8 +30,12 @@ jobs:
 
       - name: Create plugin package
         run: |
-          # Extract version from csproj
-          VERSION=$(grep -oPm1 "(?<=<Version>)[^<]+" Jellyfin.Plugin.DynamicLibrary/Jellyfin.Plugin.DynamicLibrary.csproj)
+          # Use tag version for releases, csproj version otherwise
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(grep -oPm1 "(?<=<Version>)[^<]+" Jellyfin.Plugin.DynamicLibrary/Jellyfin.Plugin.DynamicLibrary.csproj)
+          fi
           echo "VERSION=${VERSION}" >> $GITHUB_ENV
 
           mkdir -p artifacts/DynamicLibrary
