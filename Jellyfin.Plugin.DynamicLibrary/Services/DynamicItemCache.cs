@@ -25,6 +25,7 @@ public class DynamicItemCache
     private const string MediaSourcePrefix = "mediasource_to_episode:";
     private const string SubtitlesPrefix = "dynamic_subtitles:";
     private const string SelectedMediaSourcePrefix = "selected_mediasource:";
+    private const string AIOStreamsPrefix = "aiostreams_stream:";
 
     public DynamicItemCache(IMemoryCache cache, ILogger<DynamicItemCache> logger)
     {
@@ -238,4 +239,47 @@ public class DynamicItemCache
         var key = $"{SelectedMediaSourcePrefix}{episodeId:N}";
         return _cache.TryGetValue<string>(key, out var mediaSourceId) ? mediaSourceId : null;
     }
+
+    /// <summary>
+    /// Store a mapping from AIOStreams MediaSource ID to item ID and stream URL.
+    /// This allows us to resolve MediaSource IDs to both the parent item and stream URL.
+    /// </summary>
+    public void StoreAIOStreamsMapping(string mediaSourceId, Guid itemId, string streamUrl, string? filename = null)
+    {
+        var key = $"{AIOStreamsPrefix}{mediaSourceId}";
+        var mapping = new AIOStreamsMapping { ItemId = itemId, StreamUrl = streamUrl, Filename = filename };
+        _cache.Set(key, mapping, _cacheDuration);
+        _logger.LogDebug("[DynamicItemCache] Stored AIOStreams mapping: {MediaSourceId} -> Item {ItemId}, URL {StreamUrl}",
+            mediaSourceId, itemId, streamUrl);
+    }
+
+    /// <summary>
+    /// Get the full AIOStreams mapping for a MediaSource ID.
+    /// Returns null if the MediaSource ID is not in the cache.
+    /// </summary>
+    public AIOStreamsMapping? GetAIOStreamsMapping(string mediaSourceId)
+    {
+        var key = $"{AIOStreamsPrefix}{mediaSourceId}";
+        return _cache.TryGetValue<AIOStreamsMapping>(key, out var mapping) ? mapping : null;
+    }
+
+    /// <summary>
+    /// Get the stream URL for an AIOStreams MediaSource ID.
+    /// Returns null if the MediaSource ID is not in the cache.
+    /// </summary>
+    public string? GetAIOStreamsStreamUrl(string mediaSourceId)
+    {
+        var mapping = GetAIOStreamsMapping(mediaSourceId);
+        return mapping?.StreamUrl;
+    }
+}
+
+/// <summary>
+/// Represents a mapping from an AIOStreams MediaSource ID to item details.
+/// </summary>
+public class AIOStreamsMapping
+{
+    public Guid ItemId { get; set; }
+    public string StreamUrl { get; set; } = string.Empty;
+    public string? Filename { get; set; }
 }

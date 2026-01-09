@@ -147,11 +147,51 @@
                 <option value="None">None (Browse Only)</option>
                 <option value="Embedarr">Embedarr</option>
                 <option value="Direct">Direct URL Templates</option>
+                <option value="AIOStreams">AIOStreams</option>
               </select>
               <div class="fieldDescription">
                 None: Browse content without streaming capability.<br>
                 Embedarr: Use Embedarr to generate STRM files and stream.<br>
-                Direct: Use custom URL templates for direct streaming.
+                Direct: Use custom URL templates for direct streaming.<br>
+                AIOStreams: Use AIOStreams Stremio addon for streaming (supports debrid, torrent, NZB).
+              </div>
+            </div>
+          </div>
+
+          <div class="verticalSection" id="aiostreamsSettings" style="display: none;">
+            <h3 class="sectionTitle">AIOStreams Settings</h3>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtAIOStreamsUrl">AIOStreams Addon URL:</label>
+              <input is="emby-input" type="text" id="txtAIOStreamsUrl" class="emby-input" placeholder="https://aiostreams.elfhosted.com/E2_xxxxx" />
+              <div class="fieldDescription">
+                Your full AIOStreams addon URL including the encrypted configuration.<br>
+                Get yours from:
+                <ul style="margin: 0.5em 0 0 1.5em; padding: 0;">
+                  <li><strong>Self-hosted:</strong> Your AIOStreams instance configuration page</li>
+                  <li><strong>ElfHosted:</strong> <a href="https://elfhosted.com/app/aiostreams/" target="_blank">elfhosted.com/app/aiostreams</a></li>
+                </ul>
+              </div>
+            </div>
+
+            <div style="background: #1a1a1a; border: 1px solid #333; border-radius: 4px; padding: 1em; margin: 1em 0;">
+              <h4 style="margin: 0 0 0.5em 0; color: #00a4dc;">How it works</h4>
+              <p style="margin: 0; color: #999; font-size: 0.9em;">
+                AIOStreams is a Stremio addon aggregator that handles stream discovery and delivery.<br>
+                Configure your sources (debrid services, torrent indexers, NZB via NZBDav) in AIOStreams,<br>
+                then paste your addon URL here. The plugin will query AIOStreams for available streams<br>
+                when you play content.
+              </p>
+            </div>
+
+            <div class="checkboxContainer checkboxContainer-withDescription">
+              <label>
+                <input is="emby-checkbox" type="checkbox" id="chkEnableHlsProbing" />
+                <span>Enable HLS Duration Probing</span>
+              </label>
+              <div class="fieldDescription">
+                Probe HLS streams to extract accurate duration. Helps with scrubbing on Android TV and other players.
+                Disable if experiencing playback issues (some streams use one-time tokens that are invalidated by probing).
               </div>
             </div>
           </div>
@@ -479,6 +519,11 @@
         const txtAnimeAudioTracks = document.querySelector('#txtAnimeAudioTracks');
         const animeAudioTracksContainer = document.querySelector('#animeAudioTracksContainer');
 
+        // Cache DOM elements - AIOStreams settings
+        const txtAIOStreamsUrl = document.querySelector('#txtAIOStreamsUrl');
+        const chkEnableHlsProbing = document.querySelector('#chkEnableHlsProbing');
+        const aiostreamsSettings = document.querySelector('#aiostreamsSettings');
+
         // Cache DOM elements - subtitle settings
         const chkEnableSubtitles = document.querySelector('#chkEnableSubtitles');
         const txtOpenSubtitlesApiKey = document.querySelector('#txtOpenSubtitlesApiKey');
@@ -523,6 +568,7 @@
           const provider = selStreamProvider.value;
           embedarrSettings.style.display = provider === 'Embedarr' ? 'block' : 'none';
           directSettings.style.display = provider === 'Direct' ? 'block' : 'none';
+          aiostreamsSettings.style.display = provider === 'AIOStreams' ? 'block' : 'none';
         }
 
         function updateAnimeAudioTracksVisibility() {
@@ -596,6 +642,10 @@
             chkEnableAnimeAudioVersions.checked = config.EnableAnimeAudioVersions ?? false;
             txtAnimeAudioTracks.value = config.AnimeAudioTracks || 'sub,dub';
 
+            // AIOStreams settings
+            txtAIOStreamsUrl.value = config.AIOStreamsUrl || '';
+            chkEnableHlsProbing.checked = config.EnableHlsProbing ?? false;
+
             // Subtitle settings
             chkEnableSubtitles.checked = config.EnableSubtitles ?? false;
             txtOpenSubtitlesApiKey.value = config.OpenSubtitlesApiKey || '';
@@ -664,6 +714,10 @@
             config.ShowUnreleasedStreams = chkShowUnreleasedStreams.checked;
             config.EnableAnimeAudioVersions = chkEnableAnimeAudioVersions.checked;
             config.AnimeAudioTracks = txtAnimeAudioTracks.value.trim() || 'sub,dub';
+
+            // AIOStreams settings
+            config.AIOStreamsUrl = txtAIOStreamsUrl.value.trim();
+            config.EnableHlsProbing = chkEnableHlsProbing.checked;
 
             // Subtitle settings
             config.EnableSubtitles = chkEnableSubtitles.checked;

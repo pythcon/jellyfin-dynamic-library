@@ -44,7 +44,10 @@ public enum StreamProvider
     Embedarr = 1,
 
     /// <summary>Use URL templates directly for streaming.</summary>
-    Direct = 2
+    Direct = 2,
+
+    /// <summary>Use AIOStreams Stremio addon for streaming.</summary>
+    AIOStreams = 3
 }
 
 /// <summary>
@@ -125,9 +128,25 @@ public class PluginConfiguration : BasePluginConfiguration
 
     /// <summary>
     /// Gets or sets the stream provider for playback.
-    /// None = browse only, Embedarr = use Embedarr API, Direct = use URL templates.
+    /// None = browse only, Embedarr = use Embedarr API, Direct = use URL templates, AIOStreams = use Stremio addon.
     /// </summary>
     public StreamProvider StreamProvider { get; set; } = StreamProvider.None;
+
+    /// <summary>
+    /// Gets or sets the AIOStreams addon URL.
+    /// This is the full addon URL including the encrypted configuration.
+    /// Example: https://aiostreams.elfhosted.com/E2_xxxxx
+    /// </summary>
+    public string AIOStreamsUrl { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets whether to probe HLS streams for accurate duration.
+    /// When enabled, fetches m3u8 playlists to determine exact runtime.
+    /// This helps with scrubbing on Android TV and other players.
+    /// Disable if experiencing playback issues with token-based streams.
+    /// Default: false (disabled)
+    /// </summary>
+    public bool EnableHlsProbing { get; set; } = false;
 
     /// <summary>
     /// Gets or sets the URL template for movie streams in Direct mode.

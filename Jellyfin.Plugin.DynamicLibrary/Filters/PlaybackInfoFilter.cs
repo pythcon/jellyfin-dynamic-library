@@ -5,6 +5,7 @@ using Jellyfin.Plugin.DynamicLibrary.Configuration;
 using Jellyfin.Plugin.DynamicLibrary.Models;
 using Jellyfin.Plugin.DynamicLibrary.Services;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Dlna;
@@ -26,6 +27,8 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
 {
     private readonly DynamicItemCache _itemCache;
     private readonly IEmbedarrClient _embedarrClient;
+    private readonly IAIOStreamsClient _aiostreamsClient;
+    private readonly IHlsProbeService _hlsProbeService;
     private readonly ITmdbClient _tmdbClient;
     private readonly ITvdbClient _tvdbClient;
     private readonly SubtitleService _subtitleService;
@@ -41,6 +44,8 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
     public PlaybackInfoFilter(
         DynamicItemCache itemCache,
         IEmbedarrClient embedarrClient,
+        IAIOStreamsClient aiostreamsClient,
+        IHlsProbeService hlsProbeService,
         ITmdbClient tmdbClient,
         ITvdbClient tvdbClient,
         SubtitleService subtitleService,
@@ -49,6 +54,8 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
     {
         _itemCache = itemCache;
         _embedarrClient = embedarrClient;
+        _aiostreamsClient = aiostreamsClient;
+        _hlsProbeService = hlsProbeService;
         _tmdbClient = tmdbClient;
         _tvdbClient = tvdbClient;
         _subtitleService = subtitleService;
@@ -81,6 +88,25 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         }
 
         _logger.LogWarning("[DynamicLibrary] PlaybackInfoFilter: Processing PlaybackInfo for item {ItemId}", itemId);
+
+        // Extract selected mediaSourceId early - we might need it for AIOStreams even without cached item
+        var selectedMediaSourceId = GetSelectedMediaSourceId(context);
+
+        // For AIOStreams mode: if we have a selected MediaSource ID, try to resolve it directly
+        // This handles the case where the item isn't in cache but we have the stream URL mapping
+        if (Config.StreamProvider == StreamProvider.AIOStreams && !string.IsNullOrEmpty(selectedMediaSourceId))
+        {
+            var aioStreamUrl = _itemCache.GetAIOStreamsStreamUrl(selectedMediaSourceId);
+            if (!string.IsNullOrEmpty(aioStreamUrl))
+            {
+                _logger.LogInformation("[DynamicLibrary] PlaybackInfoFilter: Found AIOStreams mapping for {MediaSourceId}, returning stream URL",
+                    selectedMediaSourceId);
+
+                var response = BuildAIOStreamsDirectResponse(itemId, aioStreamUrl, selectedMediaSourceId);
+                context.Result = new OkObjectResult(response);
+                return;
+            }
+        }
 
         // Check if this is a dynamic item in cache
         var cachedItem = _itemCache.GetItem(itemId);
@@ -145,7 +171,25 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                     _logger.LogWarning("[DynamicLibrary] PlaybackInfo: Found persisted item {Name} with dynamicLibraryUrl {Url}",
                         libraryItem.Name, dynamicLibraryUrl);
 
-                    // Fetch subtitles for persisted items
+                    // Handle AIOStreams mode for persisted items
+                    if (Config.StreamProvider == StreamProvider.AIOStreams)
+                    {
+                        var aioResponse = await HandleAIOStreamsPlaybackForPersistedItemAsync(
+                            libraryItem, selectedMediaSourceId, context.HttpContext.RequestAborted);
+                        if (aioResponse != null)
+                        {
+                            _logger.LogInformation("[DynamicLibrary] PlaybackInfo: Returning AIOStreams response for persisted item {Name}",
+                                libraryItem.Name);
+                            context.Result = new OkObjectResult(aioResponse);
+                            return;
+                        }
+
+                        _logger.LogWarning("[DynamicLibrary] AIOStreams returned no streams for persisted item {Name}", libraryItem.Name);
+                        await next();
+                        return;
+                    }
+
+                    // Fetch subtitles for persisted items (Direct mode)
                     List<CachedSubtitle>? subtitles = null;
                     if (_subtitleService.IsEnabled)
                     {
@@ -154,7 +198,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                             subtitles?.Count ?? 0, libraryItem.Name);
                     }
 
-                    // Check if this is anime with multiple audio versions enabled
+                    // Check if this is anime with multiple audio versions enabled (Direct mode)
                     var persistedConfig = Config;
                     _logger.LogWarning("[DynamicLibrary] Anime check: URL={Url}, IsAnimeUrl={IsAnime}, EnableAudioVersions={Enable}, AudioTracks={Tracks}",
                         dynamicLibraryUrl,
@@ -247,11 +291,19 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             }
         }
 
-        // Extract selected mediaSourceId from request (query string or body)
-        var selectedMediaSourceId = GetSelectedMediaSourceId(context);
-        if (!string.IsNullOrEmpty(selectedMediaSourceId))
+        // Handle AIOStreams mode - query AIOStreams for available streams
+        if (config.StreamProvider == StreamProvider.AIOStreams)
         {
-            _logger.LogDebug("[DynamicLibrary] Selected mediaSourceId: {MediaSourceId}", selectedMediaSourceId);
+            var aioResponse = await HandleAIOStreamsPlaybackAsync(cachedItem, selectedMediaSourceId, context.HttpContext.RequestAborted);
+            if (aioResponse != null)
+            {
+                context.Result = new OkObjectResult(aioResponse);
+                return;
+            }
+
+            _logger.LogInformation("[DynamicLibrary] AIOStreams returned no streams for {Name}", cachedItem.Name);
+            await next();
+            return;
         }
 
         // Handle Direct mode with potential multi-URL support for anime versions
@@ -330,6 +382,11 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
 
             case StreamProvider.Direct:
                 return BuildDirectStreamUrl(item);
+
+            case StreamProvider.AIOStreams:
+                // AIOStreams is handled separately with multi-source support
+                _logger.LogDebug("[DynamicLibrary] AIOStreams mode - use HandleAIOStreamsPlaybackAsync instead");
+                return null;
 
             default:
                 _logger.LogError("[DynamicLibrary] Unknown stream provider: {Provider}", config.StreamProvider);
@@ -760,6 +817,34 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
     }
 
     /// <summary>
+    /// Build default video/audio MediaStreams for non-HLS sources.
+    /// HLS streams don't need this - the player parses streams from the m3u8.
+    /// Non-HLS containers (MP4, MKV, etc.) need stream metadata for the player.
+    /// </summary>
+    private static List<MediaStream> BuildDefaultMediaStreams()
+    {
+        return new List<MediaStream>
+        {
+            new MediaStream
+            {
+                Type = MediaStreamType.Video,
+                Index = 0,
+                Codec = "h264",
+                IsDefault = true,
+            },
+            new MediaStream
+            {
+                Type = MediaStreamType.Audio,
+                Index = 1,
+                Codec = "aac",
+                IsDefault = true,
+                Language = "und",
+                Channels = 2
+            }
+        };
+    }
+
+    /// <summary>
     /// Build PlaybackInfoResponse with multiple MediaSources for version selection.
     /// </summary>
     private PlaybackInfoResponse BuildPlaybackInfoResponse(BaseItemDto item, List<(string Url, string AudioType)> streamUrls, List<CachedSubtitle>? subtitles = null)
@@ -1110,16 +1195,25 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                 item.Name, runTimeTicks.Value, runTimeTicks.Value / 600_000_000);
         }
 
+        // Detect container from URL (persisted .strm files can point to HLS, MKV, etc.)
+        var container = StreamContainerHelper.DetectContainer(streamUrl, null);
+
+        // HLS: use subtitles only - player parses video/audio from m3u8
+        // Non-HLS: need default video/audio streams plus subtitles for seek support
+        var mediaStreams = container == "hls"
+            ? (subtitleStreams.Count > 0 ? subtitleStreams : new List<MediaStream>())
+            : BuildDefaultMediaStreams().Concat(subtitleStreams).ToList();
+
         var mediaSource = new MediaSourceInfo
         {
             Id = item.Id.ToString("N"),
             Name = item.Name,
             Path = streamUrl,
 
-            // Protocol settings for remote HLS
+            // Protocol settings for remote streams
             Protocol = MediaProtocol.Http,
             Type = MediaSourceType.Default,
-            Container = "hls",
+            Container = container,
 
             // Remote stream settings - DirectStream must be false to prevent
             // Jellyfin from using the database Path (dynamiclibrary://) with FFmpeg
@@ -1134,12 +1228,16 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             // Runtime from API lookup
             RunTimeTicks = runTimeTicks,
 
-            // Include subtitle streams
-            MediaStreams = subtitleStreams.Count > 0 ? subtitleStreams : new List<MediaStream>()
+            // Include media streams (video/audio for non-HLS, plus subtitles)
+            MediaStreams = mediaStreams,
+
+            // For MKV/non-HLS: Add bitrate for time-based seek calculations
+            // HLS uses segment-based seeking from m3u8 manifest and doesn't need this
+            Bitrate = container != "hls" ? 5_000_000 : null  // ~5 Mbps estimate
         };
 
-        _logger.LogDebug("[DynamicLibrary] Built PlaybackInfoResponse for persisted item {Name} with URL {Url}, Runtime {Runtime}, {SubCount} subtitles",
-            item.Name, streamUrl, runTimeTicks, subtitleStreams.Count);
+        _logger.LogDebug("[DynamicLibrary] Built PlaybackInfoResponse for persisted item {Name} with URL {Url}, Runtime {Runtime}, Container {Container}, {SubCount} subtitles",
+            item.Name, streamUrl, runTimeTicks, container, subtitleStreams.Count);
 
         return new PlaybackInfoResponse
         {
@@ -1297,5 +1395,590 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             _logger.LogError(ex, "[DynamicLibrary] Error fetching subtitles for persisted item {Name}", item.Name);
             return new List<CachedSubtitle>();
         }
+    }
+
+    /// <summary>
+    /// Handle playback via AIOStreams. Queries the AIOStreams addon for available streams
+    /// and returns them as MediaSources for the version selector.
+    /// </summary>
+    private async Task<PlaybackInfoResponse?> HandleAIOStreamsPlaybackAsync(
+        BaseItemDto item,
+        string? selectedMediaSourceId,
+        CancellationToken cancellationToken)
+    {
+        if (!_aiostreamsClient.IsConfigured)
+        {
+            _logger.LogWarning("[DynamicLibrary] AIOStreams is not configured");
+            return null;
+        }
+
+        // Get IMDB ID - required for AIOStreams
+        var imdbId = GetImdbIdForItem(item);
+        if (string.IsNullOrEmpty(imdbId))
+        {
+            _logger.LogWarning("[DynamicLibrary] No IMDB ID found for {Name}, cannot query AIOStreams", item.Name);
+            return null;
+        }
+
+        _logger.LogDebug("[DynamicLibrary] Querying AIOStreams for {Type} {Name} (IMDB: {ImdbId})",
+            item.Type, item.Name, imdbId);
+
+        // Query AIOStreams based on item type
+        AIOStreamsResponse? response;
+        if (item.Type == BaseItemKind.Movie)
+        {
+            response = await _aiostreamsClient.GetMovieStreamsAsync(imdbId, cancellationToken);
+        }
+        else if (item.Type == BaseItemKind.Episode)
+        {
+            var season = item.ParentIndexNumber ?? 1;
+            var episode = item.IndexNumber ?? 1;
+            response = await _aiostreamsClient.GetEpisodeStreamsAsync(imdbId, season, episode, cancellationToken);
+        }
+        else
+        {
+            _logger.LogWarning("[DynamicLibrary] Unsupported item type for AIOStreams: {Type}", item.Type);
+            return null;
+        }
+
+        if (response == null || response.Streams.Count == 0)
+        {
+            _logger.LogInformation("[DynamicLibrary] AIOStreams returned no streams for {Name}", item.Name);
+            return null;
+        }
+
+        _logger.LogDebug("[DynamicLibrary] AIOStreams returned {Count} streams for {Name}",
+            response.Streams.Count, item.Name);
+
+        // Get runtime - this is critical for Android TV and other players that need runtime for scrubbing
+        long? runTimeTicks = item.RunTimeTicks;
+        _logger.LogInformation("[DynamicLibrary] RunTimeTicks for {Name}: Initial={InitialTicks} (from item), Type={Type}",
+            item.Name, runTimeTicks, item.Type);
+
+        // Probe HLS for duration if enabled and item doesn't have a good runtime
+        if (Config.EnableHlsProbing && (!runTimeTicks.HasValue || runTimeTicks.Value <= 0))
+        {
+            // Find the first HLS stream to probe
+            var hlsStream = response.Streams.FirstOrDefault(s =>
+                !string.IsNullOrEmpty(s.Url) &&
+                StreamContainerHelper.DetectContainer(s.Url, s.BehaviorHints?.Filename) == "hls");
+
+            if (hlsStream != null)
+            {
+                _logger.LogDebug("[DynamicLibrary] Probing HLS stream for duration: {Url}", hlsStream.Url);
+                var probedDuration = await _hlsProbeService.GetHlsDurationTicksAsync(hlsStream.Url!, cancellationToken);
+                if (probedDuration.HasValue)
+                {
+                    runTimeTicks = probedDuration.Value;
+                    _logger.LogInformation("[DynamicLibrary] HLS probe found duration for {Name}: {Ticks} ticks ({Minutes} min)",
+                        item.Name, runTimeTicks.Value, runTimeTicks.Value / 600_000_000);
+                }
+            }
+        }
+
+        // Fallback to default duration if we still don't have a runtime
+        // This is critical for Android TV which won't play without RunTimeTicks
+        if (!runTimeTicks.HasValue || runTimeTicks.Value <= 0)
+        {
+            // Default durations: Movies = 2 hours, Episodes = 45 minutes
+            var defaultMinutes = item.Type == BaseItemKind.Movie ? 120 : 45;
+            runTimeTicks = defaultMinutes * 60L * 10_000_000L; // Convert minutes to ticks
+            _logger.LogInformation("[DynamicLibrary] Using default runtime for {Name}: {Minutes} min ({Ticks} ticks)",
+                item.Name, defaultMinutes, runTimeTicks.Value);
+        }
+
+        _logger.LogInformation("[DynamicLibrary] Final RunTimeTicks for {Name}: {Ticks}",
+            item.Name, runTimeTicks);
+
+        // If a specific stream was selected, redirect to it
+        if (!string.IsNullOrEmpty(selectedMediaSourceId))
+        {
+            var streamUrl = _itemCache.GetAIOStreamsStreamUrl(selectedMediaSourceId);
+            if (!string.IsNullOrEmpty(streamUrl))
+            {
+                _logger.LogDebug("[DynamicLibrary] Returning selected AIOStreams source: {MediaSourceId} -> {Url}",
+                    selectedMediaSourceId, streamUrl);
+
+                // Return single MediaSource with the selected stream URL
+                return BuildAIOStreamsSingleResponse(item, streamUrl, selectedMediaSourceId, runTimeTicks);
+            }
+
+            _logger.LogDebug("[DynamicLibrary] Selected MediaSource {Id} not found in cache, showing all streams",
+                selectedMediaSourceId);
+        }
+
+        // Build MediaSources from all available streams
+        var mediaSources = new List<MediaSourceInfo>();
+
+        foreach (var stream in response.Streams)
+        {
+            if (string.IsNullOrEmpty(stream.Url))
+            {
+                continue; // Skip streams without direct URL
+            }
+
+            // Generate deterministic ID for this stream
+            var sourceId = GenerateAIOStreamsMediaSourceId(stream.Url);
+
+            // Get filename hint for container detection
+            var filename = stream.BehaviorHints?.Filename;
+
+            // Store mapping so we can resolve it later
+            _itemCache.StoreAIOStreamsMapping(sourceId, item.Id, stream.Url, filename);
+
+            // Detect container from URL/filename
+            var container = StreamContainerHelper.DetectContainer(stream.Url, filename);
+
+            // HLS: don't add fake MediaStreams - player parses them from the m3u8
+            // Non-HLS (MP4, MKV, etc.): need default streams for player metadata
+            var mediaStreams = container == "hls"
+                ? new List<MediaStream>()
+                : BuildDefaultMediaStreams();
+
+            mediaSources.Add(new MediaSourceInfo
+            {
+                Id = sourceId,
+                Name = stream.DisplayName,
+                Path = stream.Url,
+                Protocol = MediaProtocol.Http,
+                Type = MediaSourceType.Default,
+                Container = container,
+                IsRemote = true,
+                SupportsDirectPlay = true,
+                SupportsDirectStream = false,  // Force Jellyfin to proxy - enables range requests for large files
+                SupportsTranscoding = false,
+                SupportsProbing = false,
+                RequiresOpening = false,
+                RequiresClosing = false,
+                RunTimeTicks = runTimeTicks,
+                MediaStreams = mediaStreams,
+                // For MKV/non-HLS: Add bitrate for time-based seek calculations
+                // HLS uses segment-based seeking from m3u8 manifest and doesn't need this
+                Bitrate = container != "hls" ? 5_000_000 : null  // ~5 Mbps estimate
+            });
+        }
+
+        if (mediaSources.Count == 0)
+        {
+            _logger.LogInformation("[DynamicLibrary] No valid streams with URLs found for {Name}", item.Name);
+            return null;
+        }
+
+        _logger.LogDebug("[DynamicLibrary] Built {Count} MediaSources from AIOStreams for {Name} with runtime {Runtime}",
+            mediaSources.Count, item.Name, runTimeTicks);
+
+        return new PlaybackInfoResponse
+        {
+            MediaSources = mediaSources.ToArray(),
+            PlaySessionId = Guid.NewGuid().ToString("N")
+        };
+    }
+
+    /// <summary>
+    /// Handle playback via AIOStreams for persisted library items.
+    /// </summary>
+    private async Task<PlaybackInfoResponse?> HandleAIOStreamsPlaybackForPersistedItemAsync(
+        MediaBrowser.Controller.Entities.BaseItem libraryItem,
+        string? selectedMediaSourceId,
+        CancellationToken cancellationToken)
+    {
+        if (!_aiostreamsClient.IsConfigured)
+        {
+            _logger.LogWarning("[DynamicLibrary] AIOStreams is not configured");
+            return null;
+        }
+
+        // Get IMDB ID from library item
+        var imdbId = GetImdbIdFromLibraryItem(libraryItem);
+        if (string.IsNullOrEmpty(imdbId))
+        {
+            _logger.LogWarning("[DynamicLibrary] No IMDB ID found for persisted item {Name}, cannot query AIOStreams", libraryItem.Name);
+            return null;
+        }
+
+        _logger.LogDebug("[DynamicLibrary] Querying AIOStreams for persisted {Type} {Name} (IMDB: {ImdbId})",
+            libraryItem.GetType().Name, libraryItem.Name, imdbId);
+
+        // Fetch runtime from API if not set (critical for player progress tracking)
+        var runTimeTicks = await GetRuntimeForPersistedItemAsync(libraryItem, cancellationToken);
+        _logger.LogInformation("[DynamicLibrary] RunTimeTicks for persisted {Name}: Initial={InitialTicks} (from API), Type={Type}",
+            libraryItem.Name, runTimeTicks, libraryItem.GetType().Name);
+
+        // Fetch subtitles for the item
+        List<CachedSubtitle>? subtitles = null;
+        if (_subtitleService.IsEnabled)
+        {
+            subtitles = await FetchSubtitlesForPersistedItemAsync(libraryItem, cancellationToken);
+            _logger.LogDebug("[DynamicLibrary] Fetched {Count} subtitles for persisted AIOStreams item {Name}",
+                subtitles?.Count ?? 0, libraryItem.Name);
+        }
+
+        // Build subtitle MediaStreams (we'll use the library item ID as base for subtitle streams)
+        var subtitleMediaSourceId = libraryItem.Id.ToString("N");
+        var subtitleStreams = subtitles != null ? BuildSubtitleMediaStreams(libraryItem.Id, subtitleMediaSourceId, subtitles) : new List<MediaStream>();
+
+        // Query AIOStreams based on item type
+        AIOStreamsResponse? response;
+        if (libraryItem is Movie)
+        {
+            response = await _aiostreamsClient.GetMovieStreamsAsync(imdbId, cancellationToken);
+        }
+        else if (libraryItem is Episode episode)
+        {
+            var season = episode.ParentIndexNumber ?? 1;
+            var episodeNum = episode.IndexNumber ?? 1;
+            response = await _aiostreamsClient.GetEpisodeStreamsAsync(imdbId, season, episodeNum, cancellationToken);
+        }
+        else
+        {
+            _logger.LogWarning("[DynamicLibrary] Unsupported item type for AIOStreams: {Type}", libraryItem.GetType().Name);
+            return null;
+        }
+
+        if (response == null || response.Streams.Count == 0)
+        {
+            _logger.LogInformation("[DynamicLibrary] AIOStreams returned no streams for persisted item {Name}", libraryItem.Name);
+            return null;
+        }
+
+        _logger.LogDebug("[DynamicLibrary] AIOStreams returned {Count} streams for persisted item {Name}",
+            response.Streams.Count, libraryItem.Name);
+
+        // Probe HLS for duration if we still don't have a good runtime
+        // This is critical for Android TV and other players that need runtime for scrubbing
+        if (Config.EnableHlsProbing && (!runTimeTicks.HasValue || runTimeTicks.Value <= 0))
+        {
+            var hlsStream = response.Streams.FirstOrDefault(s =>
+                !string.IsNullOrEmpty(s.Url) &&
+                StreamContainerHelper.DetectContainer(s.Url, s.BehaviorHints?.Filename) == "hls");
+
+            if (hlsStream != null)
+            {
+                _logger.LogDebug("[DynamicLibrary] Probing HLS stream for duration (persisted): {Url}", hlsStream.Url);
+                var probedDuration = await _hlsProbeService.GetHlsDurationTicksAsync(hlsStream.Url!, cancellationToken);
+                if (probedDuration.HasValue)
+                {
+                    runTimeTicks = probedDuration.Value;
+                    _logger.LogInformation("[DynamicLibrary] HLS probe found duration for persisted {Name}: {Ticks} ticks ({Minutes} min)",
+                        libraryItem.Name, runTimeTicks.Value, runTimeTicks.Value / 600_000_000);
+                }
+            }
+        }
+
+        // Fallback to default duration if we still don't have a runtime
+        // This is critical for Android TV which won't play without RunTimeTicks
+        if (!runTimeTicks.HasValue || runTimeTicks.Value <= 0)
+        {
+            // Default durations: Movies = 2 hours, Episodes = 45 minutes
+            var defaultMinutes = libraryItem is Movie ? 120 : 45;
+            runTimeTicks = defaultMinutes * 60L * 10_000_000L; // Convert minutes to ticks
+            _logger.LogInformation("[DynamicLibrary] Using default runtime for persisted {Name}: {Minutes} min ({Ticks} ticks)",
+                libraryItem.Name, defaultMinutes, runTimeTicks.Value);
+        }
+
+        _logger.LogInformation("[DynamicLibrary] Final RunTimeTicks for persisted {Name}: {Ticks}",
+            libraryItem.Name, runTimeTicks);
+
+        // If a specific stream was selected, redirect to it
+        if (!string.IsNullOrEmpty(selectedMediaSourceId))
+        {
+            var streamUrl = _itemCache.GetAIOStreamsStreamUrl(selectedMediaSourceId);
+            if (!string.IsNullOrEmpty(streamUrl))
+            {
+                _logger.LogDebug("[DynamicLibrary] Returning selected AIOStreams source for persisted item: {MediaSourceId} -> {Url}",
+                    selectedMediaSourceId, streamUrl);
+
+                return BuildAIOStreamsSingleResponseForPersistedItem(libraryItem, streamUrl, selectedMediaSourceId, runTimeTicks, subtitleStreams);
+            }
+
+            _logger.LogDebug("[DynamicLibrary] Selected MediaSource {Id} not found in cache for persisted item, showing all streams",
+                selectedMediaSourceId);
+        }
+
+        // Build MediaSources from all available streams
+        var mediaSources = new List<MediaSourceInfo>();
+
+        foreach (var stream in response.Streams)
+        {
+            if (string.IsNullOrEmpty(stream.Url))
+            {
+                continue;
+            }
+
+            var sourceId = GenerateAIOStreamsMediaSourceId(stream.Url);
+            var filename = stream.BehaviorHints?.Filename;
+
+            _itemCache.StoreAIOStreamsMapping(sourceId, libraryItem.Id, stream.Url, filename);
+
+            var container = StreamContainerHelper.DetectContainer(stream.Url, filename);
+
+            // HLS: use subtitles only - player parses video/audio from m3u8
+            // Non-HLS: need default video/audio streams plus subtitles
+            var mediaStreams = container == "hls"
+                ? (subtitleStreams.Count > 0 ? subtitleStreams : new List<MediaStream>())
+                : BuildDefaultMediaStreams().Concat(subtitleStreams).ToList();
+
+            mediaSources.Add(new MediaSourceInfo
+            {
+                Id = sourceId,
+                Name = stream.DisplayName,
+                Path = stream.Url,
+                Protocol = MediaProtocol.Http,
+                Type = MediaSourceType.Default,
+                Container = container,
+                IsRemote = true,
+                SupportsDirectPlay = true,
+                SupportsDirectStream = false,  // Force Jellyfin to proxy - enables range requests for large files
+                SupportsTranscoding = false,
+                SupportsProbing = false,
+                RequiresOpening = false,
+                RequiresClosing = false,
+                RunTimeTicks = runTimeTicks,
+                MediaStreams = mediaStreams,
+                // For MKV/non-HLS: Add bitrate for time-based seek calculations
+                // HLS uses segment-based seeking from m3u8 manifest and doesn't need this
+                Bitrate = container != "hls" ? 5_000_000 : null  // ~5 Mbps estimate
+            });
+        }
+
+        if (mediaSources.Count == 0)
+        {
+            _logger.LogInformation("[DynamicLibrary] No valid streams with URLs found for persisted item {Name}", libraryItem.Name);
+            return null;
+        }
+
+        _logger.LogDebug("[DynamicLibrary] Built {Count} MediaSources from AIOStreams for persisted item {Name}",
+            mediaSources.Count, libraryItem.Name);
+
+        return new PlaybackInfoResponse
+        {
+            MediaSources = mediaSources.ToArray(),
+            PlaySessionId = Guid.NewGuid().ToString("N")
+        };
+    }
+
+    /// <summary>
+    /// Build a single-stream PlaybackInfoResponse for AIOStreams with a persisted library item.
+    /// </summary>
+    private PlaybackInfoResponse BuildAIOStreamsSingleResponseForPersistedItem(
+        MediaBrowser.Controller.Entities.BaseItem libraryItem,
+        string streamUrl,
+        string mediaSourceId,
+        long? runTimeTicks,
+        List<MediaStream> subtitleStreams)
+    {
+        var mapping = _itemCache.GetAIOStreamsMapping(mediaSourceId);
+        var container = StreamContainerHelper.DetectContainer(streamUrl, mapping?.Filename);
+
+        // HLS: use subtitles only - player parses video/audio from m3u8
+        // Non-HLS: need default video/audio streams plus subtitles
+        var mediaStreams = container == "hls"
+            ? (subtitleStreams.Count > 0 ? subtitleStreams : new List<MediaStream>())
+            : BuildDefaultMediaStreams().Concat(subtitleStreams).ToList();
+
+        var mediaSource = new MediaSourceInfo
+        {
+            Id = mediaSourceId,
+            Name = libraryItem.Name,
+            Path = streamUrl,
+            Protocol = MediaProtocol.Http,
+            Type = MediaSourceType.Default,
+            Container = container,
+            IsRemote = true,
+            SupportsDirectPlay = true,
+            SupportsDirectStream = false,  // Force Jellyfin to proxy - enables range requests for large files
+            SupportsTranscoding = false,
+            SupportsProbing = false,
+            RequiresOpening = false,
+            RequiresClosing = false,
+            RunTimeTicks = runTimeTicks,
+            MediaStreams = mediaStreams,
+            // For MKV/non-HLS: Add bitrate for time-based seek calculations
+            // HLS uses segment-based seeking from m3u8 manifest and doesn't need this
+            Bitrate = container != "hls" ? 5_000_000 : null  // ~5 Mbps estimate
+        };
+
+        return new PlaybackInfoResponse
+        {
+            MediaSources = new[] { mediaSource },
+            PlaySessionId = Guid.NewGuid().ToString("N")
+        };
+    }
+
+    /// <summary>
+    /// Get the IMDB ID from a library item, checking item and series provider IDs.
+    /// </summary>
+    private string? GetImdbIdFromLibraryItem(MediaBrowser.Controller.Entities.BaseItem item)
+    {
+        // Try item's IMDB ID first
+        if (item.ProviderIds?.TryGetValue("Imdb", out var imdbId) == true && !string.IsNullOrEmpty(imdbId))
+        {
+            return imdbId;
+        }
+
+        // For episodes, try the series IMDB ID
+        if (item is Episode episode && episode.SeriesId != Guid.Empty)
+        {
+            var series = _libraryManager.GetItemById(episode.SeriesId);
+            if (series?.ProviderIds?.TryGetValue("Imdb", out var seriesImdbId) == true && !string.IsNullOrEmpty(seriesImdbId))
+            {
+                return seriesImdbId;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Build a single-stream PlaybackInfoResponse for AIOStreams.
+    /// </summary>
+    private PlaybackInfoResponse BuildAIOStreamsSingleResponse(BaseItemDto item, string streamUrl, string mediaSourceId, long? runTimeTicks)
+    {
+        // Get the mapping to retrieve filename hint for container detection
+        var mapping = _itemCache.GetAIOStreamsMapping(mediaSourceId);
+        var container = StreamContainerHelper.DetectContainer(streamUrl, mapping?.Filename);
+
+        _logger.LogInformation("[DynamicLibrary] BuildAIOStreamsSingleResponse for {Name}: RunTimeTicks={Ticks}, Container={Container}",
+            item.Name, runTimeTicks, container);
+
+        // HLS: don't add fake MediaStreams - player parses them from the m3u8
+        // Non-HLS: need default video/audio streams for player metadata
+        var mediaStreams = container == "hls"
+            ? new List<MediaStream>()
+            : BuildDefaultMediaStreams();
+
+        var mediaSource = new MediaSourceInfo
+        {
+            Id = mediaSourceId,
+            Name = item.Name,
+            Path = streamUrl,
+            Protocol = MediaProtocol.Http,
+            Type = MediaSourceType.Default,
+            Container = container,
+            IsRemote = true,
+            SupportsDirectPlay = true,
+            SupportsDirectStream = false,  // Force Jellyfin to proxy - enables range requests for large files
+            SupportsTranscoding = false,
+            SupportsProbing = false,
+            RequiresOpening = false,
+            RequiresClosing = false,
+            RunTimeTicks = runTimeTicks,
+            MediaStreams = mediaStreams,
+            // For MKV/non-HLS: Add bitrate for time-based seek calculations
+            // HLS uses segment-based seeking from m3u8 manifest and doesn't need this
+            Bitrate = container != "hls" ? 5_000_000 : null  // ~5 Mbps estimate
+        };
+
+        return new PlaybackInfoResponse
+        {
+            MediaSources = new[] { mediaSource },
+            PlaySessionId = Guid.NewGuid().ToString("N")
+        };
+    }
+
+    /// <summary>
+    /// Build a PlaybackInfoResponse directly from AIOStreams stream URL mapping.
+    /// Used when the item isn't in cache but we have the MediaSource → URL mapping.
+    /// </summary>
+    private PlaybackInfoResponse BuildAIOStreamsDirectResponse(Guid itemId, string streamUrl, string mediaSourceId)
+    {
+        // Get the mapping to retrieve filename hint for container detection
+        var mapping = _itemCache.GetAIOStreamsMapping(mediaSourceId);
+        var container = StreamContainerHelper.DetectContainer(streamUrl, mapping?.Filename);
+
+        // Try to get runtime from library item, otherwise use default
+        // This is critical for Android TV which won't play without RunTimeTicks
+        long? runTimeTicks = null;
+        string itemName = "Stream";
+
+        var libraryItem = _libraryManager.GetItemById(itemId);
+        if (libraryItem != null)
+        {
+            runTimeTicks = libraryItem.RunTimeTicks;
+            itemName = libraryItem.Name;
+            _logger.LogInformation("[DynamicLibrary] BuildAIOStreamsDirectResponse: Library item {Name} has RunTimeTicks={Ticks}",
+                itemName, runTimeTicks);
+        }
+
+        // Fallback to default duration if we don't have a runtime
+        if (!runTimeTicks.HasValue || runTimeTicks.Value <= 0)
+        {
+            // Default to 2 hours for movies (most common case for direct mapping)
+            var defaultMinutes = 120;
+            runTimeTicks = defaultMinutes * 60L * 10_000_000L;
+            _logger.LogInformation("[DynamicLibrary] BuildAIOStreamsDirectResponse: Using default runtime {Minutes} min for {Name}",
+                defaultMinutes, itemName);
+        }
+
+        _logger.LogInformation("[DynamicLibrary] BuildAIOStreamsDirectResponse: Final RunTimeTicks={Ticks}, Container={Container}",
+            runTimeTicks, container);
+
+        // HLS: don't add fake MediaStreams - player parses them from the m3u8
+        // Non-HLS (MP4, etc.): need default video/audio streams for player metadata
+        var mediaStreams = container == "hls"
+            ? new List<MediaStream>()
+            : BuildDefaultMediaStreams();
+
+        var mediaSource = new MediaSourceInfo
+        {
+            Id = mediaSourceId,
+            Name = itemName,
+            Path = streamUrl,
+            Protocol = MediaProtocol.Http,
+            Type = MediaSourceType.Default,
+            Container = container,
+            IsRemote = true,
+            SupportsDirectPlay = true,
+            SupportsDirectStream = false,  // Force Jellyfin to proxy - enables range requests for large files
+            SupportsTranscoding = false,
+            SupportsProbing = false,
+            RequiresOpening = false,
+            RequiresClosing = false,
+            RunTimeTicks = runTimeTicks,
+            MediaStreams = mediaStreams,
+            // For MKV/non-HLS: Add bitrate for time-based seek calculations
+            // HLS uses segment-based seeking from m3u8 manifest and doesn't need this
+            Bitrate = container != "hls" ? 5_000_000 : null  // ~5 Mbps estimate
+        };
+
+        return new PlaybackInfoResponse
+        {
+            MediaSources = new[] { mediaSource },
+            PlaySessionId = Guid.NewGuid().ToString("N")
+        };
+    }
+
+    /// <summary>
+    /// Get the IMDB ID for an item, checking both item and series provider IDs.
+    /// </summary>
+    private string? GetImdbIdForItem(BaseItemDto item)
+    {
+        // Try item's IMDB ID first
+        if (item.ProviderIds?.TryGetValue("Imdb", out var imdbId) == true && !string.IsNullOrEmpty(imdbId))
+        {
+            return imdbId;
+        }
+
+        // For episodes, try the series IMDB ID
+        if (item.Type == BaseItemKind.Episode && item.SeriesId.HasValue)
+        {
+            var series = _itemCache.GetItem(item.SeriesId.Value);
+            if (series?.ProviderIds?.TryGetValue("Imdb", out var seriesImdbId) == true && !string.IsNullOrEmpty(seriesImdbId))
+            {
+                return seriesImdbId;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Generate a deterministic GUID for an AIOStreams MediaSource based on the stream URL.
+    /// </summary>
+    private static string GenerateAIOStreamsMediaSourceId(string streamUrl)
+    {
+        using var md5 = System.Security.Cryptography.MD5.Create();
+        var hash = md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes($"aiostreams:{streamUrl}"));
+        return new Guid(hash).ToString("N");
     }
 }

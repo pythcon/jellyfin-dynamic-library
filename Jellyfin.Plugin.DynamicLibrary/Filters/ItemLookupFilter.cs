@@ -1,8 +1,11 @@
 using Jellyfin.Data.Enums;
+using Jellyfin.Plugin.DynamicLibrary.Api;
 using Jellyfin.Plugin.DynamicLibrary.Configuration;
+using Jellyfin.Plugin.DynamicLibrary.Models;
 using Jellyfin.Plugin.DynamicLibrary.Services;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
+using Jellyfin.Database.Implementations.Entities;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.MediaInfo;
@@ -24,7 +27,10 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
     private readonly SearchResultFactory _searchResultFactory;
     private readonly DynamicLibraryService _dynamicLibraryService;
     private readonly PersistenceService _persistenceService;
+    private readonly IAIOStreamsClient _aiostreamsClient;
     private readonly ILibraryManager _libraryManager;
+    private readonly IUserDataManager _userDataManager;
+    private readonly IUserManager _userManager;
     private readonly ILogger<ItemLookupFilter> _logger;
 
     // Action names that look up individual items
@@ -50,14 +56,20 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
         SearchResultFactory searchResultFactory,
         DynamicLibraryService dynamicLibraryService,
         PersistenceService persistenceService,
+        IAIOStreamsClient aiostreamsClient,
         ILibraryManager libraryManager,
+        IUserDataManager userDataManager,
+        IUserManager userManager,
         ILogger<ItemLookupFilter> logger)
     {
         _itemCache = itemCache;
         _searchResultFactory = searchResultFactory;
         _dynamicLibraryService = dynamicLibraryService;
         _persistenceService = persistenceService;
+        _aiostreamsClient = aiostreamsClient;
         _libraryManager = libraryManager;
+        _userDataManager = userDataManager;
+        _userManager = userManager;
         _logger = logger;
     }
 
@@ -88,14 +100,105 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
             return;
         }
 
+        // Try to get the user ID from the action arguments (for UserLibrary endpoints)
+        Guid? userId = null;
+        if (context.ActionArguments.TryGetValue("userId", out var userIdObj) && userIdObj is Guid extractedUserId)
+        {
+            userId = extractedUserId;
+        }
+
         // Check if this is a dynamic item in our cache
         var cachedItem = _itemCache.GetItem(itemId);
         var requestedMediaSourceId = (string?)null;
 
         if (cachedItem == null)
         {
-            // Check if this is a MediaSource ID that maps to an episode
             var mediaSourceIdStr = itemId.ToString("N");
+
+            // Check if this is an AIOStreams MediaSource ID
+            var aioMapping = _itemCache.GetAIOStreamsMapping(mediaSourceIdStr);
+            if (aioMapping != null)
+            {
+                _logger.LogInformation("[DynamicLibrary] ItemLookup: Resolved AIOStreams MediaSource ID {MediaSourceId} to Item {ItemId}",
+                    mediaSourceIdStr, aioMapping.ItemId);
+
+                // Get the parent item from cache first
+                cachedItem = _itemCache.GetItem(aioMapping.ItemId);
+                if (cachedItem != null)
+                {
+                    // Return the item with just the selected MediaSource
+                    var selectedSource = cachedItem.MediaSources?.FirstOrDefault(s => s.Id == mediaSourceIdStr);
+                    if (selectedSource != null)
+                    {
+                        cachedItem.MediaSources = new[] { selectedSource };
+                        _logger.LogInformation("[DynamicLibrary] ItemLookup: Returning {Name} with selected MediaSource {SourceName}",
+                            cachedItem.Name, selectedSource.Name);
+                    }
+                    else
+                    {
+                        // MediaSource not in item's list - create one from the mapping
+                        var container = StreamContainerHelper.DetectContainer(aioMapping.StreamUrl, aioMapping.Filename);
+                        cachedItem.MediaSources = new[]
+                        {
+                            new MediaSourceInfo
+                            {
+                                Id = mediaSourceIdStr,
+                                Name = "Stream",
+                                Path = aioMapping.StreamUrl,
+                                Protocol = MediaProtocol.Http,
+                                Type = MediaSourceType.Default,
+                                Container = container,
+                                IsRemote = true,
+                                SupportsDirectPlay = true,
+                                SupportsDirectStream = true,
+                                SupportsTranscoding = false
+                            }
+                        };
+                        _logger.LogInformation("[DynamicLibrary] ItemLookup: Returning {Name} with reconstructed MediaSource",
+                            cachedItem.Name);
+                    }
+
+                    context.Result = new OkObjectResult(cachedItem);
+                    return;
+                }
+
+                // Item not in cache - check if it's a persisted library item
+                var persistedItem = _libraryManager.GetItemById(aioMapping.ItemId);
+                if (persistedItem != null)
+                {
+                    _logger.LogInformation("[DynamicLibrary] ItemLookup: Found persisted library item {Name} for AIOStreams MediaSource",
+                        persistedItem.Name);
+
+                    // Build a DTO from the library item with the selected MediaSource
+                    var container = StreamContainerHelper.DetectContainer(aioMapping.StreamUrl, aioMapping.Filename);
+                    var dto = BuildBaseItemDtoFromLibraryItem(persistedItem, userId);
+                    dto.MediaSources = new[]
+                    {
+                        new MediaSourceInfo
+                        {
+                            Id = mediaSourceIdStr,
+                            Name = "Stream",
+                            Path = aioMapping.StreamUrl,
+                            Protocol = MediaProtocol.Http,
+                            Type = MediaSourceType.Default,
+                            Container = container,
+                            IsRemote = true,
+                            SupportsDirectPlay = true,
+                            SupportsDirectStream = true,
+                            SupportsTranscoding = false,
+                            RunTimeTicks = persistedItem.RunTimeTicks
+                        }
+                    };
+
+                    context.Result = new OkObjectResult(dto);
+                    return;
+                }
+
+                _logger.LogWarning("[DynamicLibrary] ItemLookup: Could not find item {ItemId} for AIOStreams MediaSource in cache or library",
+                    aioMapping.ItemId);
+            }
+
+            // Check if this is a MediaSource ID that maps to an episode
             var episodeId = _itemCache.GetEpisodeIdForMediaSource(mediaSourceIdStr);
             if (episodeId.HasValue)
             {
@@ -116,7 +219,7 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
 
                         // Build a BaseItemDto from the library episode
                         // We can't call next() because the request is for the MediaSource ID, not the episode ID
-                        var dto = BuildBaseItemDtoFromEpisode(libraryEpisode);
+                        var dto = BuildBaseItemDtoFromEpisode(libraryEpisode, userId);
 
                         // Add MediaSources
                         await AddAnimeMediaSourcesToDto(dto, libraryEpisode, context.HttpContext.RequestAborted);
@@ -150,37 +253,51 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
                     _ = CheckPersistedItemForUpdatesAsync(itemId, context.HttpContext.RequestAborted);
                 }
 
-                // Check if this is a persisted anime episode that needs MediaSources added
+                // Check if this is a persisted item in the library
                 var libraryItem = _libraryManager.GetItemById(itemId);
-                _logger.LogWarning("[DynamicLibrary] ItemLookup persisted check: ItemId={Id}, Found={Found}, IsEpisode={IsEp}, Path={Path}",
-                    itemId, libraryItem != null, libraryItem is Episode, libraryItem?.Path ?? "null");
+                _logger.LogDebug("[DynamicLibrary] ItemLookup persisted check: ItemId={Id}, Found={Found}, Type={Type}, Path={Path}",
+                    itemId, libraryItem != null, libraryItem?.GetType().Name ?? "null", libraryItem?.Path ?? "null");
 
+                // Handle AIOStreams for any persisted item (movie or episode)
+                if (libraryItem != null && pluginConfig?.StreamProvider == StreamProvider.AIOStreams)
+                {
+                    // Check if this is a .strm file (our persisted item) or has our provider ID
+                    var isPersistedItem = libraryItem.Path?.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) == true;
+                    if (isPersistedItem)
+                    {
+                        _logger.LogDebug("[DynamicLibrary] ItemLookup: Persisted item with AIOStreams provider, enriching with streams");
+
+                        // Let Jellyfin handle the request first
+                        var result = await next();
+
+                        // Then add MediaSources from AIOStreams
+                        if (result.Result is ObjectResult objResult && objResult.Value is BaseItemDto dto)
+                        {
+                            await PopulateAIOStreamsMediaSourcesForPersistedItemAsync(dto, libraryItem, context.HttpContext.RequestAborted);
+                            _logger.LogInformation("[DynamicLibrary] Added {Count} AIOStreams MediaSources to persisted item {Name}",
+                                dto.MediaSources?.Length ?? 0, dto.Name);
+                        }
+                        return;
+                    }
+                }
+
+                // Handle anime multi-audio for Direct mode
                 if (libraryItem is Episode episode)
                 {
                     var isPersistedAnime = IsPersistedAnimeEpisode(episode);
-                    _logger.LogWarning("[DynamicLibrary] ItemLookup: Episode check - IsPersistedAnime={IsAnime}", isPersistedAnime);
+                    _logger.LogDebug("[DynamicLibrary] ItemLookup: Episode check - IsPersistedAnime={IsAnime}", isPersistedAnime);
 
-                    if (isPersistedAnime)
+                    if (isPersistedAnime && pluginConfig?.StreamProvider == StreamProvider.Direct)
                     {
                         // Let Jellyfin handle the request first
                         var result = await next();
 
-                        _logger.LogWarning("[DynamicLibrary] ItemLookup: Jellyfin result Type={Type}, ResultType={ResultType}, ValueType={ValueType}",
-                            result?.GetType().Name ?? "null", result?.Result?.GetType().Name ?? "null",
-                            (result?.Result as ObjectResult)?.Value?.GetType().Name ?? "not ObjectResult");
-
                         // Then add MediaSources to the response for anime version selector
-                        // Jellyfin returns ObjectResult (not OkObjectResult), so check for base class
                         if (result.Result is ObjectResult objResult && objResult.Value is BaseItemDto dto)
                         {
                             await AddAnimeMediaSourcesToDto(dto, episode, context.HttpContext.RequestAborted);
-                            _logger.LogWarning("[DynamicLibrary] Added {Count} MediaSources to persisted anime episode {Name}",
+                            _logger.LogDebug("[DynamicLibrary] Added {Count} MediaSources to persisted anime episode {Name}",
                                 dto.MediaSources?.Length ?? 0, dto.Name);
-                        }
-                        else
-                        {
-                            _logger.LogWarning("[DynamicLibrary] ItemLookup: Result was not ObjectResult with BaseItemDto, actual value type={Type}",
-                                (result?.Result as ObjectResult)?.Value?.GetType().Name ?? "unknown");
                         }
                         return;
                     }
@@ -265,6 +382,17 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
             {
                 _ = TriggerSeriesUpdateAsync(cachedItem);
             }
+        }
+        else if (cachedItem.Type == BaseItemKind.Episode)
+        {
+            // For episodes, populate AIOStreams MediaSources if configured
+            await PopulateAIOStreamsMediaSourcesAsync(cachedItem, context.HttpContext.RequestAborted);
+        }
+
+        // For movies, also populate AIOStreams MediaSources if configured (after enrichment)
+        if (cachedItem.Type == BaseItemKind.Movie)
+        {
+            await PopulateAIOStreamsMediaSourcesAsync(cachedItem, context.HttpContext.RequestAborted);
         }
 
         // Return our cached item directly
@@ -682,9 +810,9 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
     /// Build a BaseItemDto from a library Episode.
     /// Used when returning episode data for a MediaSource ID lookup.
     /// </summary>
-    private BaseItemDto BuildBaseItemDtoFromEpisode(Episode episode)
+    private BaseItemDto BuildBaseItemDtoFromEpisode(Episode episode, Guid? userId = null)
     {
-        return new BaseItemDto
+        var dto = new BaseItemDto
         {
             Id = episode.Id,
             Name = episode.Name,
@@ -701,5 +829,385 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
             ProviderIds = episode.ProviderIds,
             Path = episode.Path
         };
+
+        // Add UserData for resume position if userId is provided
+        if (userId.HasValue)
+        {
+            var user = _userManager.GetUserById(userId.Value);
+            if (user != null)
+            {
+                var userData = _userDataManager.GetUserData(user, episode);
+                if (userData != null)
+                {
+                    dto.UserData = new UserItemDataDto
+                    {
+                        Key = episode.GetUserDataKeys().FirstOrDefault() ?? episode.Id.ToString("N"),
+                        PlaybackPositionTicks = userData.PlaybackPositionTicks,
+                        PlayCount = userData.PlayCount,
+                        IsFavorite = userData.IsFavorite,
+                        Played = userData.Played,
+                        LastPlayedDate = userData.LastPlayedDate
+                    };
+                }
+            }
+        }
+
+        return dto;
+    }
+
+    /// <summary>
+    /// Build a BaseItemDto from any library item (Movie or Episode).
+    /// Used when returning item data for a MediaSource ID lookup.
+    /// </summary>
+    private BaseItemDto BuildBaseItemDtoFromLibraryItem(MediaBrowser.Controller.Entities.BaseItem item, Guid? userId = null)
+    {
+        if (item is Episode episode)
+        {
+            return BuildBaseItemDtoFromEpisode(episode, userId);
+        }
+
+        if (item is MediaBrowser.Controller.Entities.Movies.Movie movie)
+        {
+            var dto = new BaseItemDto
+            {
+                Id = movie.Id,
+                Name = movie.Name,
+                Type = BaseItemKind.Movie,
+                Overview = movie.Overview,
+                PremiereDate = movie.PremiereDate,
+                ProductionYear = movie.ProductionYear,
+                RunTimeTicks = movie.RunTimeTicks,
+                ProviderIds = movie.ProviderIds,
+                Path = movie.Path,
+                OfficialRating = movie.OfficialRating,
+                CommunityRating = movie.CommunityRating
+            };
+
+            // Add UserData for resume position if userId is provided
+            if (userId.HasValue)
+            {
+                var user = _userManager.GetUserById(userId.Value);
+                if (user != null)
+                {
+                    var userData = _userDataManager.GetUserData(user, movie);
+                    if (userData != null)
+                    {
+                        dto.UserData = new UserItemDataDto
+                        {
+                            Key = movie.GetUserDataKeys().FirstOrDefault() ?? movie.Id.ToString("N"),
+                            PlaybackPositionTicks = userData.PlaybackPositionTicks,
+                            PlayCount = userData.PlayCount,
+                            IsFavorite = userData.IsFavorite,
+                            Played = userData.Played,
+                            LastPlayedDate = userData.LastPlayedDate
+                        };
+                    }
+                }
+            }
+
+            return dto;
+        }
+
+        // Fallback for other item types
+        var fallbackDto = new BaseItemDto
+        {
+            Id = item.Id,
+            Name = item.Name,
+            Overview = item.Overview,
+            PremiereDate = item.PremiereDate,
+            ProductionYear = item.ProductionYear,
+            RunTimeTicks = item.RunTimeTicks,
+            ProviderIds = item.ProviderIds,
+            Path = item.Path
+        };
+
+        // Add UserData for resume position if userId is provided
+        if (userId.HasValue)
+        {
+            var user = _userManager.GetUserById(userId.Value);
+            if (user != null)
+            {
+                var userData = _userDataManager.GetUserData(user, item);
+                if (userData != null)
+                {
+                    fallbackDto.UserData = new UserItemDataDto
+                    {
+                        Key = item.GetUserDataKeys().FirstOrDefault() ?? item.Id.ToString("N"),
+                        PlaybackPositionTicks = userData.PlaybackPositionTicks,
+                        PlayCount = userData.PlayCount,
+                        IsFavorite = userData.IsFavorite,
+                        Played = userData.Played,
+                        LastPlayedDate = userData.LastPlayedDate
+                    };
+                }
+            }
+        }
+
+        return fallbackDto;
+    }
+
+    /// <summary>
+    /// Populate MediaSources from AIOStreams for movies and episodes.
+    /// This allows the version dropdown to show available streams before clicking Play.
+    /// </summary>
+    private async Task PopulateAIOStreamsMediaSourcesAsync(BaseItemDto item, CancellationToken cancellationToken)
+    {
+        var config = DynamicLibraryPlugin.Instance?.Configuration;
+        if (config?.StreamProvider != StreamProvider.AIOStreams || !_aiostreamsClient.IsConfigured)
+        {
+            return;
+        }
+
+        // Get IMDB ID - required for AIOStreams
+        var imdbId = GetImdbIdForItem(item);
+        if (string.IsNullOrEmpty(imdbId))
+        {
+            _logger.LogDebug("[DynamicLibrary] No IMDB ID found for {Name}, cannot query AIOStreams", item.Name);
+            return;
+        }
+
+        _logger.LogDebug("[DynamicLibrary] Querying AIOStreams for {Type} {Name} (IMDB: {ImdbId})",
+            item.Type, item.Name, imdbId);
+
+        try
+        {
+            // Query AIOStreams based on item type
+            AIOStreamsResponse? response;
+            if (item.Type == BaseItemKind.Movie)
+            {
+                response = await _aiostreamsClient.GetMovieStreamsAsync(imdbId, cancellationToken);
+            }
+            else if (item.Type == BaseItemKind.Episode)
+            {
+                var season = item.ParentIndexNumber ?? 1;
+                var episode = item.IndexNumber ?? 1;
+                response = await _aiostreamsClient.GetEpisodeStreamsAsync(imdbId, season, episode, cancellationToken);
+            }
+            else
+            {
+                return;
+            }
+
+            if (response?.Streams == null || response.Streams.Count == 0)
+            {
+                _logger.LogDebug("[DynamicLibrary] AIOStreams returned no streams for {Name}", item.Name);
+                return;
+            }
+
+            _logger.LogDebug("[DynamicLibrary] AIOStreams returned {Count} streams for {Name}",
+                response.Streams.Count, item.Name);
+
+            // Build MediaSourceInfo list
+            var mediaSources = new List<MediaSourceInfo>();
+            foreach (var stream in response.Streams.Where(s => !string.IsNullOrEmpty(s.Url)))
+            {
+                var sourceId = GenerateAIOStreamsMediaSourceId(stream.Url!);
+
+                // Get filename hint for container detection
+                var filename = stream.BehaviorHints?.Filename;
+
+                // Store mapping so PlaybackInfoFilter can resolve it later
+                _itemCache.StoreAIOStreamsMapping(sourceId, item.Id, stream.Url!, filename);
+
+                // Detect container from URL/filename
+                var container = StreamContainerHelper.DetectContainer(stream.Url, filename);
+
+                mediaSources.Add(new MediaSourceInfo
+                {
+                    Id = sourceId,
+                    Name = stream.DisplayName,
+                    Path = stream.Url,
+                    Protocol = MediaProtocol.Http,
+                    Type = MediaSourceType.Default,
+                    Container = container,
+                    IsRemote = true,
+                    SupportsDirectPlay = true,
+                    SupportsDirectStream = true,
+                    SupportsTranscoding = false,
+                    SupportsProbing = false,
+                    RequiresOpening = false,
+                    RequiresClosing = false,
+                    RunTimeTicks = item.RunTimeTicks
+                });
+            }
+
+            if (mediaSources.Count > 0)
+            {
+                item.MediaSources = mediaSources.ToArray();
+                _logger.LogInformation("[DynamicLibrary] Added {Count} AIOStreams MediaSources to {Name}",
+                    mediaSources.Count, item.Name);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[DynamicLibrary] Error querying AIOStreams for {Name}", item.Name);
+        }
+    }
+
+    /// <summary>
+    /// Populate MediaSources from AIOStreams for persisted library items.
+    /// This handles movies and episodes that exist in the Jellyfin library.
+    /// </summary>
+    private async Task PopulateAIOStreamsMediaSourcesForPersistedItemAsync(
+        BaseItemDto dto,
+        MediaBrowser.Controller.Entities.BaseItem libraryItem,
+        CancellationToken cancellationToken)
+    {
+        if (!_aiostreamsClient.IsConfigured)
+        {
+            return;
+        }
+
+        // Get IMDB ID from library item
+        var imdbId = GetImdbIdFromLibraryItem(libraryItem);
+        if (string.IsNullOrEmpty(imdbId))
+        {
+            _logger.LogDebug("[DynamicLibrary] No IMDB ID found for persisted item {Name}, cannot query AIOStreams", dto.Name);
+            return;
+        }
+
+        _logger.LogDebug("[DynamicLibrary] Querying AIOStreams for persisted {Type} {Name} (IMDB: {ImdbId})",
+            libraryItem.GetType().Name, dto.Name, imdbId);
+
+        try
+        {
+            // Query AIOStreams based on item type
+            AIOStreamsResponse? response;
+            if (libraryItem is MediaBrowser.Controller.Entities.Movies.Movie)
+            {
+                response = await _aiostreamsClient.GetMovieStreamsAsync(imdbId, cancellationToken);
+            }
+            else if (libraryItem is Episode episode)
+            {
+                var season = episode.ParentIndexNumber ?? 1;
+                var episodeNum = episode.IndexNumber ?? 1;
+                response = await _aiostreamsClient.GetEpisodeStreamsAsync(imdbId, season, episodeNum, cancellationToken);
+            }
+            else
+            {
+                _logger.LogDebug("[DynamicLibrary] Unsupported item type for AIOStreams: {Type}", libraryItem.GetType().Name);
+                return;
+            }
+
+            if (response?.Streams == null || response.Streams.Count == 0)
+            {
+                _logger.LogDebug("[DynamicLibrary] AIOStreams returned no streams for persisted item {Name}", dto.Name);
+                return;
+            }
+
+            _logger.LogDebug("[DynamicLibrary] AIOStreams returned {Count} streams for persisted item {Name}",
+                response.Streams.Count, dto.Name);
+
+            // Build MediaSourceInfo list
+            var mediaSources = new List<MediaSourceInfo>();
+            foreach (var stream in response.Streams.Where(s => !string.IsNullOrEmpty(s.Url)))
+            {
+                var sourceId = GenerateAIOStreamsMediaSourceId(stream.Url!);
+
+                // Get filename hint for container detection
+                var filename = stream.BehaviorHints?.Filename;
+
+                // Store mapping so PlaybackInfoFilter can resolve it later
+                _itemCache.StoreAIOStreamsMapping(sourceId, dto.Id, stream.Url!, filename);
+
+                // Detect container from URL/filename
+                var container = StreamContainerHelper.DetectContainer(stream.Url, filename);
+
+                mediaSources.Add(new MediaSourceInfo
+                {
+                    Id = sourceId,
+                    Name = stream.DisplayName,
+                    Path = stream.Url,
+                    Protocol = MediaProtocol.Http,
+                    Type = MediaSourceType.Default,
+                    Container = container,
+                    IsRemote = true,
+                    SupportsDirectPlay = true,
+                    SupportsDirectStream = true,
+                    SupportsTranscoding = false,
+                    SupportsProbing = false,
+                    RequiresOpening = false,
+                    RequiresClosing = false,
+                    RunTimeTicks = dto.RunTimeTicks ?? libraryItem.RunTimeTicks
+                });
+            }
+
+            if (mediaSources.Count > 0)
+            {
+                dto.MediaSources = mediaSources.ToArray();
+                _logger.LogInformation("[DynamicLibrary] Added {Count} AIOStreams MediaSources to persisted item {Name}",
+                    mediaSources.Count, dto.Name);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[DynamicLibrary] Error querying AIOStreams for persisted item {Name}", dto.Name);
+        }
+    }
+
+    /// <summary>
+    /// Get the IMDB ID from a library item, checking item and series provider IDs.
+    /// </summary>
+    private string? GetImdbIdFromLibraryItem(MediaBrowser.Controller.Entities.BaseItem item)
+    {
+        // Try item's IMDB ID first
+        if (item.ProviderIds?.TryGetValue("Imdb", out var imdbId) == true && !string.IsNullOrEmpty(imdbId))
+        {
+            return imdbId;
+        }
+
+        // For episodes, try the series IMDB ID
+        if (item is Episode episode && episode.SeriesId != Guid.Empty)
+        {
+            var series = _libraryManager.GetItemById(episode.SeriesId);
+            if (series?.ProviderIds?.TryGetValue("Imdb", out var seriesImdbId) == true && !string.IsNullOrEmpty(seriesImdbId))
+            {
+                return seriesImdbId;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Get the IMDB ID for an item, checking both item and series provider IDs.
+    /// </summary>
+    private string? GetImdbIdForItem(BaseItemDto item)
+    {
+        // Try item's IMDB ID first
+        if (item.ProviderIds?.TryGetValue("Imdb", out var imdbId) == true && !string.IsNullOrEmpty(imdbId))
+        {
+            return imdbId;
+        }
+
+        // For episodes, try the series IMDB ID from cache first
+        if (item.Type == BaseItemKind.Episode && item.SeriesId.HasValue)
+        {
+            // Check cache first
+            var series = _itemCache.GetItem(item.SeriesId.Value);
+            if (series?.ProviderIds?.TryGetValue("Imdb", out var seriesImdbId) == true && !string.IsNullOrEmpty(seriesImdbId))
+            {
+                return seriesImdbId;
+            }
+
+            // Fall back to library lookup
+            var librarySeries = _libraryManager.GetItemById(item.SeriesId.Value);
+            if (librarySeries?.ProviderIds?.TryGetValue("Imdb", out var librarySeriesImdbId) == true && !string.IsNullOrEmpty(librarySeriesImdbId))
+            {
+                return librarySeriesImdbId;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Generate a deterministic GUID for an AIOStreams MediaSource based on the stream URL.
+    /// </summary>
+    private static string GenerateAIOStreamsMediaSourceId(string streamUrl)
+    {
+        using var md5 = System.Security.Cryptography.MD5.Create();
+        var hash = md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes($"aiostreams:{streamUrl}"));
+        return new Guid(hash).ToString("N");
     }
 }
