@@ -9,6 +9,14 @@
     "imageUrl": "https://pythcon.github.io/jellyfin-dynamic-library/DynamicLibrary.png",
     "versions": [
       {
+        "version": "1.2.2.0",
+        "changelog": "See GitHub releases for changelog",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/pythcon/jellyfin-dynamic-library/releases/download/v1.2.2/dynamic-library-1.2.2.zip",
+        "checksum": "4c80f6df479e26161a5fdc7284ce89fa",
+        "timestamp": "2026-01-10T19:34:27Z"
+      },
+      {
         "version": "1.2.1.0",
         "changelog": "See GitHub releases for changelog",
         "targetAbi": "10.11.0.0",
