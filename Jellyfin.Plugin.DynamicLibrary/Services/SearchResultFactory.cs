@@ -696,6 +696,16 @@ public class SearchResultFactory
             dto.Overview = details.Overview;
         }
 
+        // Update PremiereDate and ProductionYear if available
+        if (details.ReleaseDate.HasValue)
+        {
+            dto.PremiereDate = details.ReleaseDate;
+        }
+        if (details.Year.HasValue)
+        {
+            dto.ProductionYear = details.Year;
+        }
+
         // Runtime (convert minutes to ticks: 1 minute = 600,000,000 ticks)
         if (details.RuntimeMinutes.HasValue && details.RuntimeMinutes > 0)
         {
