@@ -1,5 +1,6 @@
 using System.Linq;
 using Jellyfin.Plugin.DynamicLibrary.Models;
+using Jellyfin.Plugin.DynamicLibrary.Providers;
 using MediaBrowser.Model.Dto;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
@@ -26,6 +27,7 @@ public class DynamicItemCache
     private const string SubtitlesPrefix = "dynamic_subtitles:";
     private const string SelectedMediaSourcePrefix = "selected_mediasource:";
     private const string AIOStreamsPrefix = "aiostreams_stream:";
+    private const string CatalogSourcePrefix = "catalog_source:";
 
     public DynamicItemCache(IMemoryCache cache, ILogger<DynamicItemCache> logger)
     {
@@ -82,6 +84,25 @@ public class DynamicItemCache
     {
         var key = $"{ItemPrefix}{itemId}";
         return _cache.TryGetValue<BaseItemDto>(key, out _);
+    }
+
+    /// <summary>
+    /// Store the catalog source for an item (to know which provider created it).
+    /// </summary>
+    public void StoreCatalogSource(Guid itemId, CatalogSource source)
+    {
+        var key = $"{CatalogSourcePrefix}{itemId}";
+        _cache.Set(key, source, _cacheDuration);
+        _logger.LogDebug("[DynamicItemCache] Stored catalog source for {ItemId}: {Source}", itemId, source);
+    }
+
+    /// <summary>
+    /// Get the catalog source for an item.
+    /// </summary>
+    public CatalogSource? GetCatalogSource(Guid itemId)
+    {
+        var key = $"{CatalogSourcePrefix}{itemId}";
+        return _cache.TryGetValue<CatalogSource>(key, out var source) ? source : null;
     }
 
     /// <summary>

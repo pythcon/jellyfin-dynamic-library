@@ -1,5 +1,6 @@
 using Jellyfin.Plugin.DynamicLibrary.Api;
 using Jellyfin.Plugin.DynamicLibrary.Filters;
+using Jellyfin.Plugin.DynamicLibrary.Providers;
 using Jellyfin.Plugin.DynamicLibrary.ScheduledTasks;
 using Jellyfin.Plugin.DynamicLibrary.Services;
 using MediaBrowser.Controller;
@@ -32,6 +33,10 @@ public class ServiceRegistrator : IPluginServiceRegistrator
         services.AddSingleton<AniListClient>();
         services.AddSingleton<IOpenSubtitlesClient, OpenSubtitlesClient>();
         services.AddSingleton<IHlsProbeService, HlsProbeService>();
+
+        // Register catalog providers
+        services.AddSingleton<DirectCatalogProvider>();
+        services.AddSingleton<StremioCatalogProvider>();
 
         // Register caches and services
         services.AddSingleton<DynamicItemCache>();

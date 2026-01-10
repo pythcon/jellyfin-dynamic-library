@@ -32,6 +32,50 @@
           </div>
 
           <div class="verticalSection">
+            <h3 class="sectionTitle">Catalog Provider</h3>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="selCatalogProvider">Provider:</label>
+              <select is="emby-select" id="selCatalogProvider" class="emby-select">
+                <option value="StremioAddon">Stremio Addon</option>
+                <option value="Direct">Direct API Access (TVDB/TMDB)</option>
+              </select>
+              <div class="fieldDescription">
+                <strong>Stremio Addon:</strong> Use a Stremio-compatible addon like Cinemeta or AIOMetadata.<br>
+                <strong>Direct:</strong> Use TVDB and TMDB APIs directly for catalog and metadata.
+              </div>
+            </div>
+          </div>
+
+          <div class="verticalSection" id="stremioCatalogSettings" style="display: none;">
+            <h3 class="sectionTitle">Stremio Catalog Settings</h3>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtStremioCatalogUrl">Addon URL:</label>
+              <input is="emby-input" type="text" id="txtStremioCatalogUrl" class="emby-input" placeholder="https://v3-cinemeta.strem.io" />
+              <div class="fieldDescription">
+                Base URL for the Stremio addon (without /manifest.json).<br>
+                Examples:
+                <ul style="margin: 0.5em 0 0 1.5em; padding: 0;">
+                  <li><strong>Cinemeta (free):</strong> https://v3-cinemeta.strem.io</li>
+                  <li><strong>AIOMetadata:</strong> Your configured addon URL</li>
+                </ul>
+                This is separate from the AIOStreams URL used for streaming.
+              </div>
+            </div>
+
+            <div style="background: #1a1a1a; border: 1px solid #333; border-radius: 4px; padding: 1em; margin: 1em 0;">
+              <h4 style="margin: 0 0 0.5em 0; color: #00a4dc;">How it works</h4>
+              <p style="margin: 0; color: #999; font-size: 0.9em;">
+                Stremio addons provide catalog and metadata for movies and TV shows.<br>
+                This replaces TVDB/TMDB for search and item details. You can still use<br>
+                a different provider (AIOStreams, Embedarr, Direct) for actual streaming.
+              </p>
+            </div>
+          </div>
+
+          <div id="directApiSettings">
+          <div class="verticalSection">
             <h3 class="sectionTitle">API Keys</h3>
 
             <div class="inputContainer">
@@ -91,6 +135,7 @@
               <div class="fieldDescription">Maximum number of TV show/anime results to return (1-100).</div>
             </div>
           </div>
+          </div><!-- End directApiSettings -->
 
           <div class="verticalSection">
             <h3 class="sectionTitle">Provider ID Preferences</h3>
@@ -503,6 +548,7 @@
         const chkEnabled = document.querySelector('#chkEnabled');
         const txtTvdbApiKey = document.querySelector('#txtTvdbApiKey');
         const txtTmdbApiKey = document.querySelector('#txtTmdbApiKey');
+        const txtStremioCatalogUrl = document.querySelector('#txtStremioCatalogUrl');
         const txtEmbedarrUrl = document.querySelector('#txtEmbedarrUrl');
         const txtEmbedarrApiKey = document.querySelector('#txtEmbedarrApiKey');
         const chkCreateMediaOnView = document.querySelector('#chkCreateMediaOnView');
@@ -545,6 +591,7 @@
         const animePathSpan = document.querySelector('#animePath');
 
         // Cache DOM elements - selects
+        const selCatalogProvider = document.querySelector('#selCatalogProvider');
         const selStreamProvider = document.querySelector('#selStreamProvider');
         const selMovieApiSource = document.querySelector('#selMovieApiSource');
         const selTvShowApiSource = document.querySelector('#selTvShowApiSource');
@@ -555,9 +602,17 @@
         const selAnimePreferredId = document.querySelector('#selAnimePreferredId');
 
         // Cache DOM elements - conditional containers
+        const stremioCatalogSettings = document.querySelector('#stremioCatalogSettings');
+        const directApiSettings = document.querySelector('#directApiSettings');
         const embedarrSettings = document.querySelector('#embedarrSettings');
         const directSettings = document.querySelector('#directSettings');
         const languageOverrideContainer = document.querySelector('#languageOverrideContainer');
+
+        function updateCatalogProviderVisibility() {
+          const provider = selCatalogProvider.value;
+          stremioCatalogSettings.style.display = provider === 'StremioAddon' ? 'block' : 'none';
+          directApiSettings.style.display = provider === 'Direct' ? 'block' : 'none';
+        }
 
         function updateLanguageVisibility() {
           const mode = selLanguageMode.value;
@@ -661,8 +716,12 @@
             chkCreateUnreleasedMedia.checked = config.CreateUnreleasedMedia ?? false;
             chkCheckForUpdatesOnView.checked = config.CheckForUpdatesOnView ?? true;
 
+            // Stremio Catalog settings
+            txtStremioCatalogUrl.value = config.StremioCatalogUrl || '';
+
             // Select dropdowns - use helper to handle custom element timing
             // Enum values come as strings from C# JSON serialization
+            setSelectValue(selCatalogProvider, config.CatalogProvider || 'StremioAddon');
             setSelectValue(selStreamProvider, config.StreamProvider || 'None');
             setSelectValue(selMovieApiSource, config.MovieApiSource || 'Tmdb');
             setSelectValue(selTvShowApiSource, config.TvShowApiSource || 'Tvdb');
@@ -672,6 +731,7 @@
             setSelectValue(selTvShowPreferredId, config.TvShowPreferredId || 'Imdb');
             setSelectValue(selAnimePreferredId, config.AnimePreferredId || 'Imdb');
 
+            updateCatalogProviderVisibility();
             updateStreamProviderVisibility();
             updateLanguageVisibility();
             updateAnimeAudioTracksVisibility();
@@ -734,7 +794,15 @@
             config.CreateUnreleasedMedia = chkCreateUnreleasedMedia.checked;
             config.CheckForUpdatesOnView = chkCheckForUpdatesOnView.checked;
 
+            // Stremio Catalog settings - strip /manifest.json if user pasted full manifest URL
+            var stremioUrl = txtStremioCatalogUrl.value.trim();
+            if (stremioUrl.endsWith('/manifest.json')) {
+              stremioUrl = stremioUrl.slice(0, -'/manifest.json'.length);
+            }
+            config.StremioCatalogUrl = stremioUrl;
+
             // Select dropdowns - enum values are serialized as strings
+            config.CatalogProvider = selCatalogProvider.value;
             config.StreamProvider = selStreamProvider.value;
             config.MovieApiSource = selMovieApiSource.value;
             config.TvShowApiSource = selTvShowApiSource.value;
@@ -756,6 +824,7 @@
 
         // Set up event listeners once
         form.addEventListener('submit', saveConfig);
+        selCatalogProvider.addEventListener('change', updateCatalogProviderVisibility);
         selStreamProvider.addEventListener('change', updateStreamProviderVisibility);
         selLanguageMode.addEventListener('change', updateLanguageVisibility);
         chkEnableAnimeAudioVersions.addEventListener('change', updateAnimeAudioTracksVisibility);

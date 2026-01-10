@@ -24,7 +24,7 @@ public sealed class DynamicUri
     }
 
     private static readonly Regex Rx = new(
-        @"^dynamic://(?<source>tmdb|tvdb)/(?<id>[^/\s]+)$",
+        @"^dynamic://(?<source>tmdb|tvdb|imdb)/(?<id>[^/\s]+)$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     public static DynamicUri? TryParse(string? value)
@@ -43,6 +43,7 @@ public sealed class DynamicUri
         {
             "tmdb" => DynamicSource.Tmdb,
             "tvdb" => DynamicSource.Tvdb,
+            "imdb" => DynamicSource.Imdb,
             _ => throw new FormatException($"Unknown source: {sourceStr}")
         };
 
@@ -51,6 +52,7 @@ public sealed class DynamicUri
 
     public static DynamicUri FromTmdb(int id) => new(DynamicSource.Tmdb, id.ToString());
     public static DynamicUri FromTvdb(int id) => new(DynamicSource.Tvdb, id.ToString());
+    public static DynamicUri FromImdb(string imdbId) => new(DynamicSource.Imdb, imdbId);
 
     public override string ToString()
     {
@@ -58,6 +60,7 @@ public sealed class DynamicUri
         {
             DynamicSource.Tmdb => "tmdb",
             DynamicSource.Tvdb => "tvdb",
+            DynamicSource.Imdb => "imdb",
             _ => throw new InvalidOperationException($"Unknown source: {Source}")
         };
         return $"dynamic://{source}/{ExternalId}";
@@ -97,6 +100,7 @@ public sealed class DynamicUri
         {
             "tmdb" => DynamicSource.Tmdb,
             "tvdb" => DynamicSource.Tvdb,
+            "imdb" => DynamicSource.Imdb,
             _ => (DynamicSource?)null
         };
 
@@ -110,5 +114,6 @@ public sealed class DynamicUri
 public enum DynamicSource
 {
     Tmdb,
-    Tvdb
+    Tvdb,
+    Imdb
 }

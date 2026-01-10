@@ -2,6 +2,7 @@ using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.DynamicLibrary.Api;
 using Jellyfin.Plugin.DynamicLibrary.Configuration;
 using Jellyfin.Plugin.DynamicLibrary.Models;
+using Jellyfin.Plugin.DynamicLibrary.Providers;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Dto;
@@ -16,6 +17,8 @@ public class DynamicLibraryService
     private readonly ITvdbClient _tvdbClient;
     private readonly ITmdbClient _tmdbClient;
     private readonly IEmbedarrClient _embedarrClient;
+    private readonly DirectCatalogProvider _directProvider;
+    private readonly StremioCatalogProvider _stremioProvider;
     private readonly SearchResultFactory _searchResultFactory;
     private readonly ILibraryManager _libraryManager;
     private readonly IMemoryCache _cache;
@@ -25,6 +28,8 @@ public class DynamicLibraryService
         ITvdbClient tvdbClient,
         ITmdbClient tmdbClient,
         IEmbedarrClient embedarrClient,
+        DirectCatalogProvider directProvider,
+        StremioCatalogProvider stremioProvider,
         SearchResultFactory searchResultFactory,
         ILibraryManager libraryManager,
         IMemoryCache cache,
@@ -33,6 +38,8 @@ public class DynamicLibraryService
         _tvdbClient = tvdbClient;
         _tmdbClient = tmdbClient;
         _embedarrClient = embedarrClient;
+        _directProvider = directProvider;
+        _stremioProvider = stremioProvider;
         _searchResultFactory = searchResultFactory;
         _libraryManager = libraryManager;
         _cache = cache;
@@ -41,7 +48,32 @@ public class DynamicLibraryService
 
     private PluginConfiguration Config => DynamicLibraryPlugin.Instance?.Configuration ?? new PluginConfiguration();
 
-    public bool IsEnabled => Config.Enabled && (_tvdbClient.IsConfigured || _tmdbClient.IsConfigured);
+    /// <summary>
+    /// Gets the active catalog provider based on configuration.
+    /// </summary>
+    public ICatalogProvider GetCatalogProvider()
+    {
+        var config = Config;
+        return config.CatalogProvider switch
+        {
+            Configuration.CatalogProvider.StremioAddon => _stremioProvider,
+            _ => _directProvider
+        };
+    }
+
+    public bool IsEnabled
+    {
+        get
+        {
+            var config = Config;
+            if (!config.Enabled)
+            {
+                return false;
+            }
+
+            return GetCatalogProvider().IsConfigured;
+        }
+    }
 
     /// <summary>
     /// Log the current status of the service for debugging.
@@ -50,25 +82,29 @@ public class DynamicLibraryService
     {
         var config = Config;
         var pluginInstance = DynamicLibraryPlugin.Instance;
+        var provider = GetCatalogProvider();
         logger.LogInformation(
-            "[DynamicLibrary] Status: PluginInstance={Instance}, ConfigEnabled={Enabled}, TvdbConfigured={Tvdb}, TmdbConfigured={Tmdb}",
+            "[DynamicLibrary] Status: PluginInstance={Instance}, ConfigEnabled={Enabled}, CatalogProvider={Provider}, ProviderConfigured={Configured}",
             pluginInstance != null ? "exists" : "NULL",
             config.Enabled,
-            _tvdbClient.IsConfigured,
-            _tmdbClient.IsConfigured);
+            provider.ProviderName,
+            provider.IsConfigured);
     }
 
     /// <summary>
-    /// Search for content across configured APIs.
+    /// Search for content using the configured catalog provider.
     /// </summary>
     public async Task<List<BaseItemDto>> SearchAsync(
         string query,
         HashSet<BaseItemKind> requestedTypes,
         CancellationToken cancellationToken = default)
     {
+        var config = Config;
+        var provider = GetCatalogProvider();
+
         if (!IsEnabled)
         {
-            _logger.LogDebug("[DynamicLibrary] Service is not enabled");
+            _logger.LogDebug("[DynamicLibrary] Service is not enabled - returning empty results");
             return new List<BaseItemDto>();
         }
 
@@ -77,18 +113,83 @@ public class DynamicLibraryService
             return new List<BaseItemDto>();
         }
 
-        // Use case-insensitive cache key
-        var cacheKey = $"search:{query.ToLowerInvariant()}:{string.Join(",", requestedTypes.Order())}";
+        // Use case-insensitive cache key that includes provider
+        var cacheKey = $"search:{provider.ProviderName}:{query.ToLowerInvariant()}:{string.Join(",", requestedTypes.Order())}";
 
         // Check cache first
         if (_cache.TryGetValue<List<BaseItemDto>>(cacheKey, out var cachedResults) && cachedResults != null)
         {
-            _logger.LogDebug("Returning cached search results for: {Query}", query);
+            _logger.LogDebug("[DynamicLibrary] Returning cached search results for: {Query} ({Count} items)", query, cachedResults.Count);
             return cachedResults;
         }
 
-        var tasks = new List<Task<IEnumerable<BaseItemDto>>>();
+        _logger.LogDebug("[DynamicLibrary] Searching via {Provider} for: {Query}", provider.ProviderName, query);
+
+        var tasks = new List<Task<IReadOnlyList<CatalogItem>>>();
+
+        // Search movies
+        if (requestedTypes.Contains(BaseItemKind.Movie))
+        {
+            tasks.Add(provider.SearchMoviesAsync(query, config.MaxMovieResults, cancellationToken));
+        }
+
+        // Search TV shows
+        if (requestedTypes.Contains(BaseItemKind.Series))
+        {
+            tasks.Add(provider.SearchSeriesAsync(query, config.MaxTvShowResults, cancellationToken));
+        }
+
+        var catalogResults = (await Task.WhenAll(tasks)).SelectMany(r => r).ToList();
+
+        // Get existing provider IDs to filter out items already in library
+        var existingImdbIds = GetExistingProviderIds("Imdb", null);
+        var existingTmdbIds = GetExistingProviderIds("Tmdb", typeof(MediaBrowser.Controller.Entities.Movies.Movie));
+        var existingTvdbIds = GetExistingProviderIds("Tvdb", typeof(MediaBrowser.Controller.Entities.TV.Series));
+
+        // Convert CatalogItems to BaseItemDtos, filtering out existing items
+        var results = new List<BaseItemDto>();
+        foreach (var item in catalogResults)
+        {
+            // Skip if already in library
+            if (!string.IsNullOrEmpty(item.ImdbId) && existingImdbIds.Contains(item.ImdbId))
+            {
+                _logger.LogDebug("[DynamicLibrary] Skipping '{Name}' (IMDB:{Id}) - already in library", item.Name, item.ImdbId);
+                continue;
+            }
+            if (!string.IsNullOrEmpty(item.TmdbId) && existingTmdbIds.Contains(item.TmdbId))
+            {
+                _logger.LogDebug("[DynamicLibrary] Skipping '{Name}' (TMDB:{Id}) - already in library", item.Name, item.TmdbId);
+                continue;
+            }
+            if (!string.IsNullOrEmpty(item.TvdbId) && existingTvdbIds.Contains(item.TvdbId))
+            {
+                _logger.LogDebug("[DynamicLibrary] Skipping '{Name}' (TVDB:{Id}) - already in library", item.Name, item.TvdbId);
+                continue;
+            }
+
+            var dto = await _searchResultFactory.CreateDtoFromCatalogItemAsync(item, cancellationToken);
+            results.Add(dto);
+        }
+
+        // Cache results
+        var cacheDuration = TimeSpan.FromMinutes(config.CacheTtlMinutes);
+        _cache.Set(cacheKey, results, cacheDuration);
+
+        _logger.LogDebug("[DynamicLibrary] Search for '{Query}' returned {Count} results", query, results.Count);
+        return results;
+    }
+
+    /// <summary>
+    /// Legacy search method for backwards compatibility - uses Direct provider explicitly.
+    /// </summary>
+    [Obsolete("Use SearchAsync instead which uses the configured catalog provider")]
+    public async Task<List<BaseItemDto>> SearchDirectAsync(
+        string query,
+        HashSet<BaseItemKind> requestedTypes,
+        CancellationToken cancellationToken = default)
+    {
         var config = Config;
+        var tasks = new List<Task<IEnumerable<BaseItemDto>>>();
 
         // Search movies based on configured API source
         if (requestedTypes.Contains(BaseItemKind.Movie) && config.MovieApiSource != ApiSource.None)
@@ -96,10 +197,6 @@ public class DynamicLibraryService
             if (config.MovieApiSource == ApiSource.Tmdb && _tmdbClient.IsConfigured)
             {
                 tasks.Add(SearchMoviesViaTmdbAsync(query, config.MaxMovieResults, cancellationToken));
-            }
-            else if (config.MovieApiSource == ApiSource.Tvdb && _tvdbClient.IsConfigured)
-            {
-                _logger.LogDebug("[DynamicLibrary] TVDB movie search not yet implemented");
             }
         }
 
@@ -110,20 +207,9 @@ public class DynamicLibraryService
             {
                 tasks.Add(SearchSeriesViaTvdbAsync(query, config.MaxTvShowResults, cancellationToken));
             }
-            else if (config.TvShowApiSource == ApiSource.Tmdb && _tmdbClient.IsConfigured)
-            {
-                _logger.LogDebug("[DynamicLibrary] TMDB TV show search not yet implemented");
-            }
         }
 
-        var results = (await Task.WhenAll(tasks)).SelectMany(r => r).ToList();
-
-        // Cache results
-        var cacheDuration = TimeSpan.FromMinutes(config.CacheTtlMinutes);
-        _cache.Set(cacheKey, results, cacheDuration);
-
-        _logger.LogDebug("[DynamicLibrary] Search for '{Query}' returned {Count} results", query, results.Count);
-        return results;
+        return (await Task.WhenAll(tasks)).SelectMany(r => r).ToList();
     }
 
     private async Task<IEnumerable<BaseItemDto>> SearchMoviesViaTmdbAsync(string query, int maxResults, CancellationToken cancellationToken)
@@ -203,17 +289,32 @@ public class DynamicLibraryService
     /// <summary>
     /// Get all provider IDs of a specific type from existing library items.
     /// </summary>
-    private HashSet<string> GetExistingProviderIds(string providerName, Type itemType)
+    /// <param name="providerName">The provider name (Imdb, Tmdb, Tvdb)</param>
+    /// <param name="itemType">The item type to filter by, or null for both movies and series</param>
+    private HashSet<string> GetExistingProviderIds(string providerName, Type? itemType)
     {
         var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         try
         {
+            BaseItemKind[] includeTypes;
+            if (itemType == null)
+            {
+                // Include both movies and series
+                includeTypes = new[] { BaseItemKind.Movie, BaseItemKind.Series };
+            }
+            else if (itemType == typeof(MediaBrowser.Controller.Entities.Movies.Movie))
+            {
+                includeTypes = new[] { BaseItemKind.Movie };
+            }
+            else
+            {
+                includeTypes = new[] { BaseItemKind.Series };
+            }
+
             var query = new InternalItemsQuery
             {
-                IncludeItemTypes = itemType == typeof(MediaBrowser.Controller.Entities.Movies.Movie)
-                    ? new[] { BaseItemKind.Movie }
-                    : new[] { BaseItemKind.Series },
+                IncludeItemTypes = includeTypes,
                 Recursive = true
             };
 

@@ -65,6 +65,18 @@ public enum ApiSource
     Tvdb = 2
 }
 
+/// <summary>
+/// Catalog provider selection for metadata and search.
+/// </summary>
+public enum CatalogProvider
+{
+    /// <summary>Use a Stremio addon (Cinemeta, AIOMetadata, etc.) for catalog and metadata.</summary>
+    StremioAddon = 0,
+
+    /// <summary>Use TVDB/TMDB APIs directly.</summary>
+    Direct = 1
+}
+
 public class PluginConfiguration : BasePluginConfiguration
 {
     /// <summary>
@@ -96,6 +108,24 @@ public class PluginConfiguration : BasePluginConfiguration
     /// Gets or sets a value indicating whether the plugin is enabled.
     /// </summary>
     public bool Enabled { get; set; } = true;
+
+    // ==================== Catalog Provider Settings ====================
+
+    /// <summary>
+    /// Gets or sets the catalog provider for metadata and search.
+    /// Direct = use TVDB/TMDB APIs directly.
+    /// StremioAddon = use a Stremio addon (Cinemeta, AIOMetadata, etc.).
+    /// </summary>
+    public CatalogProvider CatalogProvider { get; set; } = CatalogProvider.StremioAddon;
+
+    /// <summary>
+    /// Gets or sets the Stremio addon URL for catalog and metadata.
+    /// Only used when CatalogProvider is StremioAddon.
+    /// Example: https://v3-cinemeta.strem.io or your AIOMetadata instance URL.
+    /// </summary>
+    public string StremioCatalogUrl { get; set; } = string.Empty;
+
+    // ==================== Direct API Settings (when CatalogProvider=Direct) ====================
 
     /// <summary>
     /// Gets or sets the API source for movie searches.
