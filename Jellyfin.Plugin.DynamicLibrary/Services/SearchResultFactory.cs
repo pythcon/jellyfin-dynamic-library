@@ -803,8 +803,10 @@ public class SearchResultFactory
         // Create season DTOs
         var seasonDtos = new List<BaseItemDto>();
         var seasonIdMap = new Dictionary<int, Guid>();
+        var seriesImageUrl = _itemCache.GetImageUrl(seriesId);
 
-        foreach (var season in details.Seasons.OrderBy(s => s.Number))
+        // Filter out Season 0 (Specials)
+        foreach (var season in details.Seasons.Where(s => s.Number > 0).OrderBy(s => s.Number))
         {
             var seasonId = GenerateGuid($"stremio:season:{seriesId:N}:{season.Number}");
 
@@ -834,7 +836,21 @@ public class SearchResultFactory
                 }
             };
 
-            _itemCache.StoreItem(seasonDto);
+            // Set series poster as season poster
+            if (!string.IsNullOrEmpty(seriesImageUrl))
+            {
+                seasonDto.ImageTags = new Dictionary<ImageType, string>
+                {
+                    { ImageType.Primary, "dynamic" }
+                };
+                seasonDto.PrimaryImageAspectRatio = 0.667;
+                _itemCache.StoreItem(seasonDto, seriesImageUrl);
+            }
+            else
+            {
+                _itemCache.StoreItem(seasonDto);
+            }
+
             seasonDtos.Add(seasonDto);
             seasonIdMap[season.Number] = seasonId;
         }
@@ -860,11 +876,15 @@ public class SearchResultFactory
         {
             var episodeDtos = new List<BaseItemDto>();
 
-            foreach (var episode in details.Episodes.OrderBy(e => e.SeasonNumber).ThenBy(e => e.EpisodeNumber))
+            foreach (var episode in details.Episodes
+                .Where(e => e.SeasonNumber > 0) // Skip Season 0 episodes
+                .OrderBy(e => e.SeasonNumber)
+                .ThenBy(e => e.EpisodeNumber))
             {
                 if (!seasonIdMap.TryGetValue(episode.SeasonNumber, out var seasonId))
                 {
-                    seasonId = GenerateGuid($"stremio:season:{seriesId:N}:{episode.SeasonNumber}");
+                    // If season was filtered out but episode exists (shouldn't happen with above filter), skip it
+                    continue;
                 }
 
                 var episodeId = GenerateGuid($"stremio:episode:{seriesId:N}:{episode.SeasonNumber}:{episode.EpisodeNumber}");
@@ -1132,17 +1152,16 @@ public class SearchResultFactory
             }
         };
 
-        // Set image if available
-        if (!string.IsNullOrEmpty(season.Image))
+        // Use series poster for season poster
+        var seriesImageUrl = _itemCache.GetImageUrl(seriesId);
+        if (!string.IsNullOrEmpty(seriesImageUrl))
         {
             dto.ImageTags = new Dictionary<ImageType, string>
             {
                 { ImageType.Primary, "dynamic" }
             };
             dto.PrimaryImageAspectRatio = 0.667;
-            // Ensure full URL for TVDB images
-            var imageUrl = GetFullTvdbImageUrl(season.Image);
-            _itemCache.StoreItem(dto, imageUrl);
+            _itemCache.StoreItem(dto, seriesImageUrl);
         }
         else
         {
