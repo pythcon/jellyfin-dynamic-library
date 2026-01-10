@@ -1532,6 +1532,106 @@ public class SearchResultFactory
     }
 
     /// <summary>
+    /// Get runtime for a library item from cache or API.
+    /// </summary>
+    public async Task<long?> GetRuntimeAsync(MediaBrowser.Controller.Entities.BaseItem item, CancellationToken cancellationToken)
+    {
+        // Try library item first (in case Jellyfin has metadata)
+        if (item.RunTimeTicks > 0)
+        {
+            return item.RunTimeTicks;
+        }
+
+        // Try TMDB (movies)
+        if (item.ProviderIds?.TryGetValue("Tmdb", out var tmdbId) == true &&
+            int.TryParse(tmdbId, out var tmdbIdInt))
+        {
+            // Try cache first
+            var cached = _itemCache.GetItem(DynamicUri.FromTmdb(tmdbIdInt).ToGuid());
+            if (cached?.RunTimeTicks > 0)
+            {
+                _logger.LogDebug("[DynamicLibrary] Got runtime from cache for TMDB {Id}: {Ticks}", tmdbIdInt, cached.RunTimeTicks);
+                return cached.RunTimeTicks;
+            }
+
+            // Query API
+            var details = await _tmdbClient.GetMovieDetailsAsync(tmdbIdInt, cancellationToken);
+            if (details?.Runtime > 0)
+            {
+                var ticks = details.Runtime.Value * 600_000_000L;
+                _logger.LogDebug("[DynamicLibrary] Got runtime from TMDB API for {Id}: {Minutes} min = {Ticks} ticks", tmdbIdInt, details.Runtime, ticks);
+                return ticks;
+            }
+        }
+
+        // Try TVDB (TV shows/episodes)
+        // For episodes, we need the SERIES TVDB ID (not episode ID) for the API call
+        string? tvdbSeriesId = null;
+        if (item is MediaBrowser.Controller.Entities.TV.Episode episode)
+        {
+            // Get series TVDB ID from the parent series
+            var series = _itemCache.GetItem(episode.SeriesId); // Try cache first
+            if (series == null)
+            {
+                // Fallback to searching the database/library manager - we'll need to inject ILibraryManager if we want to do this here
+                // For now let's use the item's provider IDs if it has SeriesTvdb (some of our DTOs store it)
+                tvdbSeriesId = item.ProviderIds?.GetValueOrDefault("SeriesTvdb");
+            }
+            else
+            {
+                tvdbSeriesId = series.ProviderIds?.GetValueOrDefault("Tvdb");
+            }
+        }
+        else
+        {
+            // For series items, use the item's own TVDB ID
+            tvdbSeriesId = item.ProviderIds?.GetValueOrDefault("Tvdb");
+        }
+
+        if (!string.IsNullOrEmpty(tvdbSeriesId) && int.TryParse(tvdbSeriesId, out var tvdbIdInt))
+        {
+            // Try cache first
+            var cached = _itemCache.GetItem(DynamicUri.FromTvdb(tvdbIdInt).ToGuid());
+            if (cached?.RunTimeTicks > 0)
+            {
+                _logger.LogDebug("[DynamicLibrary] Got runtime from cache for TVDB {Id}: {Ticks}", tvdbIdInt, cached.RunTimeTicks);
+                return cached.RunTimeTicks;
+            }
+
+            // Query TVDB API for series details (has AverageRuntime)
+            var details = await _tvdbClient.GetSeriesExtendedAsync(tvdbIdInt, cancellationToken);
+            if (details?.AverageRuntime > 0)
+            {
+                var ticks = details.AverageRuntime.Value * 600_000_000L;
+                _logger.LogDebug("[DynamicLibrary] Got runtime from TVDB API for {Id}: {Minutes} min = {Ticks} ticks", tvdbIdInt, details.AverageRuntime, ticks);
+                return ticks;
+            }
+        }
+
+        // Fallback: Use sensible defaults based on content type
+        if (item is MediaBrowser.Controller.Entities.TV.Episode episode3)
+        {
+            // Check if anime based on path
+            var isAnime = item.Path?.Contains("/anime/", StringComparison.OrdinalIgnoreCase) == true;
+            var defaultMinutes = isAnime ? 24 : 45;
+            var defaultTicks = defaultMinutes * 600_000_000L;
+            _logger.LogWarning("[DynamicLibrary] GetRuntimeAsync: Using default {Minutes}-minute runtime for episode {Name}",
+                defaultMinutes, item.Name);
+            return defaultTicks;
+        }
+
+        if (item is MediaBrowser.Controller.Entities.Movies.Movie)
+        {
+            // Movie default: 120 minutes (2 hours)
+            var defaultTicks = 120 * 600_000_000L;
+            return defaultTicks;
+        }
+
+        // Generic fallback: 60 minutes
+        return 60 * 600_000_000L;
+    }
+
+    /// <summary>
     /// Calculate the cumulative episode count from all seasons before the given season.
     /// Used for calculating absolute episode numbers when TVDB doesn't provide them.
     /// </summary>

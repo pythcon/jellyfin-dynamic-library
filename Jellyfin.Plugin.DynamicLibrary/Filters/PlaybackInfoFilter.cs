@@ -29,6 +29,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
     private readonly IEmbedarrClient _embedarrClient;
     private readonly IAIOStreamsClient _aiostreamsClient;
     private readonly IHlsProbeService _hlsProbeService;
+    private readonly SearchResultFactory _searchResultFactory;
     private readonly ITmdbClient _tmdbClient;
     private readonly ITvdbClient _tvdbClient;
     private readonly SubtitleService _subtitleService;
@@ -46,6 +47,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         IEmbedarrClient embedarrClient,
         IAIOStreamsClient aiostreamsClient,
         IHlsProbeService hlsProbeService,
+        SearchResultFactory searchResultFactory,
         ITmdbClient tmdbClient,
         ITvdbClient tvdbClient,
         SubtitleService subtitleService,
@@ -56,6 +58,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         _embedarrClient = embedarrClient;
         _aiostreamsClient = aiostreamsClient;
         _hlsProbeService = hlsProbeService;
+        _searchResultFactory = searchResultFactory;
         _tmdbClient = tmdbClient;
         _tvdbClient = tvdbClient;
         _subtitleService = subtitleService;
@@ -326,19 +329,31 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                 _logger.LogDebug("[DynamicLibrary] Fetched {Count} subtitles for {Name}", subtitles?.Count ?? 0, cachedItem.Name);
             }
 
-            // If a specific mediaSource was selected, filter to just that one
-            if (!string.IsNullOrEmpty(selectedMediaSourceId) && streamUrls.Count > 1)
+            // Handle multiple stream sources (e.g., anime with SUB/DUB)
+            if (streamUrls.Count > 1)
             {
-                var selectedUrl = FindSelectedStreamUrl(streamUrls, selectedMediaSourceId, cachedItem.Id);
-                if (selectedUrl.HasValue)
+                // If a specific mediaSource was selected, filter to just that one
+                if (!string.IsNullOrEmpty(selectedMediaSourceId))
                 {
-                    _logger.LogDebug("[DynamicLibrary] PlaybackInfo: Matched version '{AudioType}' for {Name}, URL={Url}",
-                        selectedUrl.Value.AudioType, cachedItem.Name, selectedUrl.Value.Url);
-                    var response = BuildPlaybackInfoResponse(cachedItem, new List<(string, string)> { selectedUrl.Value }, subtitles);
-                    context.Result = new OkObjectResult(response);
-                    return;
+                    var selectedUrl = FindSelectedStreamUrl(streamUrls, selectedMediaSourceId, cachedItem.Id);
+                    if (selectedUrl.HasValue)
+                    {
+                        _logger.LogDebug("[DynamicLibrary] PlaybackInfo: Matched version '{AudioType}' for {Name}, URL={Url}",
+                            selectedUrl.Value.AudioType, cachedItem.Name, selectedUrl.Value.Url);
+                        var response = BuildPlaybackInfoResponse(cachedItem, new List<(string, string)> { selectedUrl.Value }, subtitles);
+                        context.Result = new OkObjectResult(response);
+                        return;
+                    }
+                    _logger.LogDebug("[DynamicLibrary] Selected mediaSourceId '{Id}' not found, defaulting to first", selectedMediaSourceId);
                 }
-                _logger.LogDebug("[DynamicLibrary] Selected mediaSourceId '{Id}' not found, returning all sources", selectedMediaSourceId);
+
+                // Default to first MediaSource for direct play (no version selected)
+                var firstUrl = streamUrls[0];
+                _logger.LogDebug("[DynamicLibrary] PlaybackInfo: Defaulting to first version '{AudioType}' for {Name}",
+                    firstUrl.AudioType, cachedItem.Name);
+                var defaultResponse = BuildPlaybackInfoResponse(cachedItem, new List<(string, string)> { firstUrl }, subtitles);
+                context.Result = new OkObjectResult(defaultResponse);
+                return;
             }
 
             _logger.LogDebug("[DynamicLibrary] Got {Count} stream URL(s) for {Name}", streamUrls.Count, cachedItem.Name);
@@ -1273,110 +1288,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
     /// </summary>
     private async Task<long?> GetRuntimeForPersistedItemAsync(BaseItem item, CancellationToken cancellationToken)
     {
-        // Try library item first (in case Jellyfin has metadata)
-        if (item.RunTimeTicks > 0)
-        {
-            return item.RunTimeTicks;
-        }
-
-        // Try TMDB (movies)
-        if (item.ProviderIds?.TryGetValue("Tmdb", out var tmdbId) == true &&
-            int.TryParse(tmdbId, out var tmdbIdInt))
-        {
-            // Try cache first
-            var cached = _itemCache.GetItem(DynamicUri.FromTmdb(tmdbIdInt).ToGuid());
-            if (cached?.RunTimeTicks > 0)
-            {
-                _logger.LogDebug("[DynamicLibrary] Got runtime from cache for TMDB {Id}: {Ticks}", tmdbIdInt, cached.RunTimeTicks);
-                return cached.RunTimeTicks;
-            }
-
-            // Query API
-            var details = await _tmdbClient.GetMovieDetailsAsync(tmdbIdInt, cancellationToken);
-            if (details?.Runtime > 0)
-            {
-                var ticks = details.Runtime.Value * 600_000_000L;
-                _logger.LogDebug("[DynamicLibrary] Got runtime from TMDB API for {Id}: {Minutes} min = {Ticks} ticks", tmdbIdInt, details.Runtime, ticks);
-                return ticks;
-            }
-        }
-
-        // Try TVDB (TV shows/episodes)
-        // For episodes, we need the SERIES TVDB ID (not episode ID) for the API call
-        string? tvdbSeriesId = null;
-        if (item is Episode episode)
-        {
-            // Get series TVDB ID from the parent series
-            var series = _libraryManager.GetItemById(episode.SeriesId);
-            tvdbSeriesId = series?.ProviderIds?.GetValueOrDefault("Tvdb");
-        }
-        else
-        {
-            // For series items, use the item's own TVDB ID
-            tvdbSeriesId = item.ProviderIds?.GetValueOrDefault("Tvdb");
-        }
-
-        if (!string.IsNullOrEmpty(tvdbSeriesId) && int.TryParse(tvdbSeriesId, out var tvdbIdInt))
-        {
-            // Try cache first
-            var cached = _itemCache.GetItem(DynamicUri.FromTvdb(tvdbIdInt).ToGuid());
-            if (cached?.RunTimeTicks > 0)
-            {
-                _logger.LogDebug("[DynamicLibrary] Got runtime from cache for TVDB {Id}: {Ticks}", tvdbIdInt, cached.RunTimeTicks);
-                return cached.RunTimeTicks;
-            }
-
-            // Query TVDB API for series details (has AverageRuntime)
-            var details = await _tvdbClient.GetSeriesExtendedAsync(tvdbIdInt, cancellationToken);
-            if (details?.AverageRuntime > 0)
-            {
-                var ticks = details.AverageRuntime.Value * 600_000_000L;
-                _logger.LogDebug("[DynamicLibrary] Got runtime from TVDB API for {Id}: {Minutes} min = {Ticks} ticks", tvdbIdInt, details.AverageRuntime, ticks);
-                return ticks;
-            }
-        }
-
-        // Try getting runtime from parent series (Jellyfin metadata)
-        if (item is Episode episode2)
-        {
-            var series = _libraryManager.GetItemById(episode2.SeriesId);
-            // Series.RunTimeTicks is often the average episode runtime
-            if (series?.RunTimeTicks > 0)
-            {
-                _logger.LogDebug("[DynamicLibrary] Got runtime from parent series for {Name}: {Ticks}",
-                    item.Name, series.RunTimeTicks);
-                return series.RunTimeTicks;
-            }
-        }
-
-        // Fallback: Use sensible defaults based on content type
-        // Without runtime, Jellyfin can't calculate progress percentage and will mark as watched immediately
-        if (item is Episode episode3)
-        {
-            // Check if anime based on path
-            var isAnime = item.Path?.Contains("/anime/", StringComparison.OrdinalIgnoreCase) == true;
-            var defaultMinutes = isAnime ? 24 : 45;
-            var defaultTicks = defaultMinutes * 600_000_000L;
-            _logger.LogWarning("[DynamicLibrary] GetRuntimeForPersistedItemAsync: Using default {Minutes}-minute runtime for episode {Name} (no runtime found, TMDB={Tmdb}, TVDB={Tvdb})",
-                defaultMinutes, item.Name,
-                item.ProviderIds?.GetValueOrDefault("Tmdb") ?? "null",
-                item.ProviderIds?.GetValueOrDefault("Tvdb") ?? "null");
-            return defaultTicks;
-        }
-
-        if (item is MediaBrowser.Controller.Entities.Movies.Movie)
-        {
-            // Movie default: 120 minutes (2 hours)
-            var defaultTicks = 120 * 600_000_000L;
-            _logger.LogWarning("[DynamicLibrary] GetRuntimeForPersistedItemAsync: Using default 120-minute runtime for movie {Name} (no runtime found, TMDB={Tmdb})",
-                item.Name, item.ProviderIds?.GetValueOrDefault("Tmdb") ?? "null");
-            return defaultTicks;
-        }
-
-        // Generic fallback: 60 minutes
-        _logger.LogWarning("[DynamicLibrary] GetRuntimeForPersistedItemAsync: Using default 60-minute runtime for {Name} (unknown type: {Type})",
-            item.Name, item.GetType().Name);
-        return 60 * 600_000_000L;
+        return await _searchResultFactory.GetRuntimeAsync(item, cancellationToken);
     }
 
     /// <summary>
@@ -1625,6 +1537,16 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         var runTimeTicks = await GetRuntimeForPersistedItemAsync(libraryItem, cancellationToken);
         _logger.LogInformation("[DynamicLibrary] RunTimeTicks for persisted {Name}: Initial={InitialTicks} (from API), Type={Type}",
             libraryItem.Name, runTimeTicks, libraryItem.GetType().Name);
+
+        // CRITICAL: Update database item so Jellyfin can track progress correctly
+        // Jellyfin uses the database RunTimeTicks for progress calculation, not the one we return
+        if (runTimeTicks.HasValue && libraryItem.RunTimeTicks != runTimeTicks.Value)
+        {
+            libraryItem.RunTimeTicks = runTimeTicks.Value;
+            await _libraryManager.UpdateItemAsync(libraryItem, libraryItem.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken);
+            _logger.LogInformation("[DynamicLibrary] Updated database RunTimeTicks for {Name}: {Ticks} ({Minutes} min)",
+                libraryItem.Name, runTimeTicks.Value, runTimeTicks.Value / 600_000_000);
+        }
 
         // Fetch subtitles for the item
         List<CachedSubtitle>? subtitles = null;
@@ -1923,6 +1845,16 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             runTimeTicks = await GetRuntimeForPersistedItemAsync(libraryItem, cancellationToken);
             _logger.LogInformation("[DynamicLibrary] BuildAIOStreamsDirectResponseAsync: Library item {Name} has RunTimeTicks={Ticks} (from API lookup)",
                 itemName, runTimeTicks);
+
+            // CRITICAL: Update database item so Jellyfin can track progress correctly
+            // Jellyfin uses the database RunTimeTicks for progress calculation, not the one we return
+            if (runTimeTicks.HasValue && libraryItem.RunTimeTicks != runTimeTicks.Value)
+            {
+                libraryItem.RunTimeTicks = runTimeTicks.Value;
+                await _libraryManager.UpdateItemAsync(libraryItem, libraryItem.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken);
+                _logger.LogInformation("[DynamicLibrary] Updated database RunTimeTicks for {Name}: {Ticks} ({Minutes} min)",
+                    libraryItem.Name, runTimeTicks.Value, runTimeTicks.Value / 600_000_000);
+            }
         }
 
         // Fallback to default duration if API lookup failed or no library item

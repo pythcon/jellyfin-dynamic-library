@@ -37,6 +37,7 @@ Thumbs.db
 
 # Project specific
 CLAUDE.md
+GEMINI.md
 BUILD-PLAN.md
 PERSISTENT-MEDIA-PLAN.md
 jellyfin-test/

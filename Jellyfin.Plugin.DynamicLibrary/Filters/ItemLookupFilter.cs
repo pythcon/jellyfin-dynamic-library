@@ -738,6 +738,17 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
             var anilistId = segments[0];
             var episodeNum = segments[1];
 
+            // Fetch runtime from API if not set (critical for player progress tracking)
+            var runTimeTicks = await _searchResultFactory.GetRuntimeAsync(episode, cancellationToken);
+            if (runTimeTicks.HasValue && episode.RunTimeTicks != runTimeTicks.Value)
+            {
+                episode.RunTimeTicks = runTimeTicks.Value;
+                await _libraryManager.UpdateItemAsync(episode, episode.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken);
+                _logger.LogInformation("[DynamicLibrary] Updated database RunTimeTicks for anime {Name} during lookup: {Ticks} ({Minutes} min)",
+                    episode.Name, runTimeTicks.Value, runTimeTicks.Value / 600_000_000);
+                dto.RunTimeTicks = runTimeTicks.Value;
+            }
+
             var template = config.DirectAnimeUrlTemplate;
             if (string.IsNullOrEmpty(template))
             {
@@ -1068,6 +1079,17 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
 
         _logger.LogDebug("[DynamicLibrary] Querying AIOStreams for persisted {Type} {Name} (IMDB: {ImdbId})",
             libraryItem.GetType().Name, dto.Name, imdbId);
+
+        // Fetch runtime from API if not set (critical for player progress tracking)
+        var runTimeTicks = await _searchResultFactory.GetRuntimeAsync(libraryItem, cancellationToken);
+        if (runTimeTicks.HasValue && libraryItem.RunTimeTicks != runTimeTicks.Value)
+        {
+            libraryItem.RunTimeTicks = runTimeTicks.Value;
+            await _libraryManager.UpdateItemAsync(libraryItem, libraryItem.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken);
+            _logger.LogInformation("[DynamicLibrary] Updated database RunTimeTicks for {Name} during lookup: {Ticks} ({Minutes} min)",
+                libraryItem.Name, runTimeTicks.Value, runTimeTicks.Value / 600_000_000);
+            dto.RunTimeTicks = runTimeTicks.Value;
+        }
 
         try
         {
