@@ -1,14 +1,16 @@
 # Jellyfin Dynamic Library Plugin
 
-A Jellyfin plugin that creates an "infinite library" by displaying content from TVDB and TMDB even when media files don't exist locally. Search results appear as virtual items that can be browsed for metadata or streamed via configurable providers.
+A Jellyfin plugin that creates an "infinite library" by displaying content from TVDB, TMDB, or Stremio addons even when media files don't exist locally. Search results appear as virtual items that can be browsed for metadata or streamed via configurable providers.
 
 ## Prerequisites
 
 - Jellyfin 10.11.x or later
-- At least one metadata API key:
+- At least one metadata source:
   - [TVDB API key](https://thetvdb.com/api-information) - for TV shows and anime
   - [TMDB API key](https://www.themoviedb.org/settings/api) - for movies
+  - Stremio catalog addon URL (e.g., Cinemeta, AIOMetadata)
 - (Optional) Stream provider for playback:
+  - AIOStreams addon (recommended), OR
   - Embedarr instance, OR
   - Direct URL templates to your streaming service
 
@@ -16,7 +18,7 @@ A Jellyfin plugin that creates an "infinite library" by displaying content from 
 
 ### From Plugin Repository (Recommended)
 
-1. In Jellyfin, go to **Dashboard → Plugins → Repositories**
+1. In Jellyfin, go to **Dashboard > Plugins > Repositories**
 2. Click **Add** and enter:
    - **Repository Name:** Dynamic Library
    - **Repository URL:** `https://pythcon.github.io/jellyfin-dynamic-library/manifest.json`
@@ -36,34 +38,44 @@ A Jellyfin plugin that creates an "infinite library" by displaying content from 
 
 ## Quick Start
 
-1. Go to **Dashboard → Plugins → Dynamic Library**
-2. Enter your TVDB and/or TMDB API keys
-3. Select API sources for each content type (Movies, TV Shows)
-4. (Optional) Configure a stream provider for playback
+1. Go to **Dashboard > Plugins > Dynamic Library**
+2. Choose a **Catalog Provider**:
+   - **Stremio Addon**: Enter a Stremio catalog URL (e.g., `https://v3-cinemeta.strem.io`)
+   - **Direct**: Enter your TVDB and/or TMDB API keys
+3. (Optional) Configure a **Stream Provider** for playback:
+   - **AIOStreams**: Enter your AIOStreams addon URL
+   - **Direct**: Configure URL templates
+   - **Embedarr**: Enter your Embedarr instance URL
+4. (Optional) Enable **Persistence** to save items to your library
 5. Save and restart Jellyfin
-6. Search for any movie or TV show - results will include virtual items from the configured APIs
+6. Search for any movie or TV show - results will include virtual items from the configured sources
 
 ## Features
 
 ### Virtual Library Items
-- Search returns results from TVDB/TMDB alongside your existing library
+- Search returns results from your configured catalog source alongside your existing library
 - Full metadata including posters, backdrops, cast, descriptions, and ratings
 - Virtual items are distinguished by a `DynamicLibrary` provider ID
 
-### Flexible Content Sources
-- **Movies**: TMDB or TVDB
-- **TV Shows**: TVDB or TMDB
-- **Anime**: TVDB with AniList ID support
+### Catalog Providers
+- **Stremio Addon**: Use Cinemeta, AIOMetadata, or any compatible Stremio addon
+- **Direct APIs**: Query TVDB/TMDB directly for metadata
 
 ### Multiple Stream Providers
 - **None**: Browse-only mode for metadata exploration
+- **AIOStreams**: Use your configured AIOStreams Stremio addon for multi-source streaming with version selection
 - **Embedarr**: Automatic STRM generation via Embedarr API
 - **Direct**: Custom URL templates with placeholder support
+
+### Persistent Library
+- Optionally save virtual items as real Jellyfin library items (.strm files)
+- Full playback tracking, watched status, and resume support
+- Automatic detection of new episodes for ongoing series
 
 ### Anime Audio Versions
 - Optional sub/dub track selection for anime content
 - Configurable audio track options (e.g., "sub,dub")
-- Uses `{audio}` placeholder in URL templates
+- Works with Direct mode URL templates
 
 ### Automatic Subtitles
 - Fetches subtitles from OpenSubtitles for virtual items
@@ -76,32 +88,71 @@ A Jellyfin plugin that creates an "infinite library" by displaying content from 
 
 ## Configuration
 
-### API Keys
+### General Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `Enabled` | true | Enable/disable the plugin |
+| `CacheTtlMinutes` | 60 | How long to cache API responses |
+
+### Catalog Provider
+
+| Setting | Options | Description |
+|---------|---------|-------------|
+| `CatalogProvider` | StremioAddon, Direct | Source for metadata and search results |
+| `StremioCatalogUrl` | - | Stremio addon URL (when using StremioAddon mode) |
+
+**Stremio Addon Examples:**
+```
+# Cinemeta (official Stremio catalog)
+https://v3-cinemeta.strem.io
+
+# AIOMetadata (your configured instance)
+https://your-aiometadata-instance.com/xxxxx
+```
+
+### Direct API Settings (when CatalogProvider=Direct)
 
 | Setting | Description |
 |---------|-------------|
 | `TvdbApiKey` | TVDB v4 API key for TV shows and anime |
 | `TmdbApiKey` | TMDB v3 API key for movies |
-
-### Content Sources
-
-| Setting | Options | Description |
-|---------|---------|-------------|
-| `MovieApiSource` | None, TMDB, TVDB | API source for movie searches |
-| `TvShowApiSource` | None, TVDB, TMDB | API source for TV show searches |
+| `MovieApiSource` | API source for movies: None, TMDB, or TVDB |
+| `TvShowApiSource` | API source for TV shows: None, TVDB, or TMDB |
+| `MaxMovieResults` | Maximum movie search results (default: 20) |
+| `MaxTvShowResults` | Maximum TV show search results (default: 20) |
 
 ### Stream Provider
 
 | Setting | Description |
 |---------|-------------|
-| `StreamProvider` | None (browse only), Embedarr, or Direct |
+| `StreamProvider` | None (browse only), AIOStreams, Embedarr, or Direct |
+
+#### AIOStreams Settings
+
+| Setting | Description |
+|---------|-------------|
+| `AIOStreamsUrl` | Full AIOStreams addon URL including encrypted config (e.g., `https://aiostreams.elfhosted.com/E2_xxxxx`) |
+| `EnableHlsProbing` | Probe HLS streams for accurate duration (helps with scrubbing on Android TV). Disable if experiencing playback issues with token-based streams. Default: false |
+
+#### Embedarr Settings
+
+| Setting | Description |
+|---------|-------------|
 | `EmbedarrUrl` | Embedarr instance URL |
 | `EmbedarrApiKey` | Embedarr API key (if required) |
-| `CreateMediaOnView` | Pre-trigger Embedarr when viewing item details |
+| `CreateMediaOnView` | Pre-trigger Embedarr when viewing item details (default: false) |
 
-### Direct URL Templates
+#### Direct URL Templates
 
-Templates support these placeholders:
+| Setting | Description |
+|---------|-------------|
+| `DirectMovieUrlTemplate` | URL template for movie streams |
+| `DirectTvUrlTemplate` | URL template for TV show streams |
+| `DirectAnimeUrlTemplate` | URL template for anime streams |
+| `ShowUnreleasedStreams` | Generate stream URLs for unreleased content (default: false) |
+
+**Template Placeholders:**
 
 | Placeholder | Description |
 |-------------|-------------|
@@ -140,56 +191,79 @@ Control which ID is used for stream lookups:
 
 ### Anime Audio Versions
 
-| Setting | Description |
-|---------|-------------|
-| `EnableAnimeAudioVersions` | Show audio track selector for anime |
-| `AnimeAudioTracks` | Comma-separated track options (default: "sub,dub") |
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `EnableAnimeAudioVersions` | false | Show audio track selector for anime |
+| `AnimeAudioTracks` | "sub,dub" | Comma-separated track options |
 
 ### Language Settings
 
-| Setting | Description |
-|---------|-------------|
-| `LanguageMode` | Default (original) or Override |
-| `PreferredLanguage` | ISO 639-2 code (eng, jpn, spa, fra, deu, etc.) |
+| Setting | Options | Description |
+|---------|---------|-------------|
+| `LanguageMode` | Default, Override | Default uses original language from API |
+| `PreferredLanguage` | ISO 639-2 code | Language code (eng, jpn, spa, fra, deu, etc.) |
 
 ### Subtitle Settings
 
-| Setting | Description |
-|---------|-------------|
-| `EnableSubtitles` | Enable automatic subtitle fetching |
-| `OpenSubtitlesApiKey` | API key from [OpenSubtitles](https://www.opensubtitles.com/consumers) |
-| `SubtitleLanguages` | Comma-separated ISO 639-1 codes (e.g., "en,es,fr") |
-| `UseJellyfinOpenSubtitlesCredentials` | Use credentials from Jellyfin's OpenSubtitles plugin |
-| `SubtitleCachePath` | Local path for cached subtitle files |
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `EnableSubtitles` | false | Enable automatic subtitle fetching |
+| `OpenSubtitlesApiKey` | - | API key from [OpenSubtitles](https://www.opensubtitles.com/consumers) |
+| `SubtitleLanguages` | "en" | Comma-separated ISO 639-1 codes (e.g., "en,es,fr") |
+| `MaxSubtitlesPerLanguage` | 1 | Maximum subtitles to download per language |
+| `UseJellyfinOpenSubtitlesCredentials` | true | Use credentials from Jellyfin's OpenSubtitles plugin |
+| `SubtitleCachePath` | /tmp/jellyfin-dynamiclibrary-subtitles | Local path for cached subtitle files |
 
-### Other Settings
+### Persistence Settings
+
+Enable persistence to save virtual items as real Jellyfin library items with full playback tracking.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `Enabled` | true | Enable/disable the plugin |
-| `CacheTtlMinutes` | 60 | How long to cache API responses |
-| `MaxMovieResults` | 20 | Maximum movie search results |
-| `MaxTvShowResults` | 20 | Maximum TV show search results |
+| `EnablePersistence` | false | Enable persistent library items (.strm files) |
+| `PersistentLibraryPath` | /dynamic-library | Root folder for persistent items (add as a Jellyfin library) |
+| `TriggerLibraryScan` | true | Automatically scan library after creating new items |
+| `CreateUnreleasedMedia` | false | Create media for unreleased content |
+| `CheckForUpdatesOnView` | true | Check for new episodes when viewing persisted series |
+
+**Setting Up Persistence:**
+
+1. Enable `EnablePersistence` in plugin settings
+2. Set `PersistentLibraryPath` to a folder (e.g., `/media/dynamic-library`)
+3. Add this folder as a Jellyfin library (Movies and/or Shows)
+4. When you click on a virtual item, it creates a .strm file in this folder
+5. Library scan adds it as a real item with full tracking
 
 ## How It Works
 
 ```
 Search Query
-    ↓
+    |
+    v
 SearchActionFilter intercepts request
-    ↓
-Query TVDB/TMDB APIs
-    ↓
+    |
+    v
+Query catalog source (Stremio addon or TVDB/TMDB)
+    |
+    v
 Create virtual BaseItemDto objects with unique GUIDs
-    ↓
+    |
+    v
 Cache items in memory
-    ↓
+    |
+    v
 Return results to Jellyfin UI
-    ↓
-User clicks item → ItemLookupFilter returns cached DTO
-    ↓
-User plays item → PlaybackInfoFilter gets stream URL
-    ↓
+    |
+    v
+User clicks item -> ItemLookupFilter returns cached DTO
+    |
+    v
+(Optional) PersistenceService creates .strm files
+    |
+    v
+User plays item -> PlaybackInfoFilter gets stream URL
+    |
+    v
 (Optional) SubtitleFilter serves cached subtitles
 ```
 
@@ -197,10 +271,28 @@ Virtual items use deterministic GUIDs generated from a unique prefix (`jellyfin-
 
 ## Known Limitations
 
-- Virtual items are ephemeral and exist only in memory cache
-- Playback requires a configured stream provider (Embedarr or Direct URLs)
+- Virtual items (without persistence) are ephemeral and exist only in memory cache
+- Playback requires a configured stream provider (AIOStreams, Embedarr, or Direct URLs)
 - Some metadata may be incomplete depending on API availability
 - Episode translations may not be available for all languages in TVDB
+- Android TV may have quirks with version selection (the plugin includes workarounds)
+
+## Troubleshooting
+
+### Version Selection Not Working on Android TV
+The plugin includes workarounds for Android TV's version selection quirks. If you're still experiencing issues, try:
+1. Clear the Jellyfin app cache on Android TV
+2. Ensure you're on the latest plugin version
+
+### Playback Fails Immediately
+1. Check that your stream provider is correctly configured
+2. For AIOStreams, verify your addon URL is valid and not expired
+3. For Direct mode, ensure URL templates include all required placeholders
+
+### Missing Subtitles
+1. Verify OpenSubtitles API key is correct
+2. Check that the language codes in `SubtitleLanguages` are valid ISO 639-1 codes
+3. Subtitles may not be available for all content
 
 ## Support
 
