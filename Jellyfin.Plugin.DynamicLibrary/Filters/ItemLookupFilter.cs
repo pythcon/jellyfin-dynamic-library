@@ -158,6 +158,12 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
                             cachedItem.Name);
                     }
 
+                    // Store selection for Android TV which passes episode ID instead of MediaSource ID
+                    if (cachedItem.Type == BaseItemKind.Episode)
+                    {
+                        _itemCache.StoreSelectedMediaSource(aioMapping.ItemId, mediaSourceIdStr);
+                    }
+
                     context.Result = new OkObjectResult(cachedItem);
                     return;
                 }
@@ -189,6 +195,12 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
                             RunTimeTicks = persistedItem.RunTimeTicks
                         }
                     };
+
+                    // Store selection for Android TV which passes episode ID instead of MediaSource ID
+                    if (persistedItem is Episode)
+                    {
+                        _itemCache.StoreSelectedMediaSource(persistedItem.Id, mediaSourceIdStr);
+                    }
 
                     context.Result = new OkObjectResult(dto);
                     return;

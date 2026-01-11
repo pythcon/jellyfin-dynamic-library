@@ -1450,6 +1450,22 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         _logger.LogInformation("[DynamicLibrary] Final RunTimeTicks for {Name}: {Ticks}",
             item.Name, runTimeTicks);
 
+        // Android TV passes episode ID instead of MediaSource ID - check for stored selection
+        if (item.Type == BaseItemKind.Episode)
+        {
+            var itemIdStr = item.Id.ToString("N");
+            if (selectedMediaSourceId == itemIdStr || string.IsNullOrEmpty(selectedMediaSourceId))
+            {
+                var storedSelection = _itemCache.GetSelectedMediaSource(item.Id);
+                if (!string.IsNullOrEmpty(storedSelection))
+                {
+                    _logger.LogInformation("[DynamicLibrary] AIOStreams: Using stored selection for {Name}: {StoredId}",
+                        item.Name, storedSelection);
+                    selectedMediaSourceId = storedSelection;
+                }
+            }
+        }
+
         // If a specific stream was selected, redirect to it
         if (!string.IsNullOrEmpty(selectedMediaSourceId))
         {
@@ -1650,6 +1666,22 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
 
         _logger.LogInformation("[DynamicLibrary] Final RunTimeTicks for persisted {Name}: {Ticks}",
             libraryItem.Name, runTimeTicks);
+
+        // Android TV passes episode ID instead of MediaSource ID - check for stored selection
+        if (libraryItem is Episode)
+        {
+            var itemIdStr = libraryItem.Id.ToString("N");
+            if (selectedMediaSourceId == itemIdStr || string.IsNullOrEmpty(selectedMediaSourceId))
+            {
+                var storedSelection = _itemCache.GetSelectedMediaSource(libraryItem.Id);
+                if (!string.IsNullOrEmpty(storedSelection))
+                {
+                    _logger.LogInformation("[DynamicLibrary] AIOStreams (persisted): Using stored selection for {Name}: {StoredId}",
+                        libraryItem.Name, storedSelection);
+                    selectedMediaSourceId = storedSelection;
+                }
+            }
+        }
 
         // If a specific stream was selected, redirect to it
         if (!string.IsNullOrEmpty(selectedMediaSourceId))
