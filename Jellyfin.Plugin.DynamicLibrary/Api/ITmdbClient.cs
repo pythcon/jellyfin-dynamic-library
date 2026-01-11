@@ -15,6 +15,11 @@ public interface ITmdbClient
     Task<TmdbMovieDetails?> GetMovieDetailsAsync(int movieId, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Get series information by external ID (e.g. IMDB ID).
+    /// </summary>
+    Task<TmdbSeriesDetails?> GetSeriesByExternalIdAsync(string externalId, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Get the base URL for images.
     /// </summary>
     Task<string> GetImageBaseUrlAsync(CancellationToken cancellationToken = default);

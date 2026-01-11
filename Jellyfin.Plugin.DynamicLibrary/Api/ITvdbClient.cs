@@ -15,6 +15,11 @@ public interface ITvdbClient
     Task<TvdbSeriesExtended?> GetSeriesExtendedAsync(int seriesId, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Get series information by remote ID (e.g. IMDB).
+    /// </summary>
+    Task<TvdbSeriesExtended?> GetSeriesByRemoteIdAsync(string remoteId, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Get translation for a series in a specific language.
     /// </summary>
     Task<TvdbTranslationData?> GetSeriesTranslationAsync(int seriesId, string language, CancellationToken cancellationToken = default);

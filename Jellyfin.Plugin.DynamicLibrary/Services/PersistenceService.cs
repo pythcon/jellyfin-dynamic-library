@@ -228,6 +228,19 @@ public class PersistenceService
             strmContent = $"dynamiclibrary://tv/{seriesIdForUrl}/{seasonNumber}/{episodeNumber}";
         }
 
+        // Append Stremio source mapping if available (for mapped official order items)
+        if (episode.ProviderIds != null)
+        {
+            var stremioS = episode.ProviderIds.GetValueOrDefault("StremioSeason");
+            var stremioE = episode.ProviderIds.GetValueOrDefault("StremioEpisode");
+            if (!string.IsNullOrEmpty(stremioS) && !string.IsNullOrEmpty(stremioE))
+            {
+                // Determine separator (? or &) based on existing URL
+                var separator = strmContent.Contains('?') ? "&" : "?";
+                strmContent += $"{separator}stremioS={stremioS}&stremioE={stremioE}";
+            }
+        }
+
         await File.WriteAllTextAsync(filePath, strmContent, cancellationToken);
         _logger.LogDebug("[PersistenceService] Created episode: {Path}", filePath);
     }

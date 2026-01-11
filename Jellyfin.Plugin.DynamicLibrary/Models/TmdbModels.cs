@@ -229,3 +229,115 @@ public class TmdbImagesConfiguration
     [JsonPropertyName("backdrop_sizes")]
     public List<string> BackdropSizes { get; set; } = new();
 }
+
+public class TmdbFindResponse
+{
+    [JsonPropertyName("movie_results")]
+    public List<TmdbMovieResult> MovieResults { get; set; } = new();
+
+    [JsonPropertyName("tv_results")]
+    public List<TmdbSeriesDetails> TvResults { get; set; } = new();
+}
+
+public class TmdbSeriesDetails
+{
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("original_name")]
+    public string OriginalName { get; set; } = string.Empty;
+
+    [JsonPropertyName("overview")]
+    public string? Overview { get; set; }
+
+    [JsonPropertyName("poster_path")]
+    public string? PosterPath { get; set; }
+
+    [JsonPropertyName("backdrop_path")]
+    public string? BackdropPath { get; set; }
+
+    [JsonPropertyName("first_air_date")]
+    public string? FirstAirDate { get; set; }
+
+    [JsonPropertyName("vote_average")]
+    public double VoteAverage { get; set; }
+
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = string.Empty;
+
+    [JsonPropertyName("seasons")]
+    public List<TmdbSeason> Seasons { get; set; } = new();
+
+    public int? Year => !string.IsNullOrEmpty(FirstAirDate) && FirstAirDate.Length >= 4
+        ? int.TryParse(FirstAirDate[..4], out var year) ? year : null
+        : null;
+}
+
+public class TmdbSeason
+{
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("overview")]
+    public string? Overview { get; set; }
+
+    [JsonPropertyName("poster_path")]
+    public string? PosterPath { get; set; }
+
+    [JsonPropertyName("season_number")]
+    public int SeasonNumber { get; set; }
+
+    [JsonPropertyName("episode_count")]
+    public int EpisodeCount { get; set; }
+
+    [JsonPropertyName("air_date")]
+    public string? AirDate { get; set; }
+
+    // Enriched after fetching season details
+    public List<TmdbEpisode>? Episodes { get; set; }
+}
+
+public class TmdbSeasonData
+{
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+
+    [JsonPropertyName("season_number")]
+    public int SeasonNumber { get; set; }
+
+    [JsonPropertyName("episodes")]
+    public List<TmdbEpisode> Episodes { get; set; } = new();
+}
+
+public class TmdbEpisode
+{
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("overview")]
+    public string? Overview { get; set; }
+
+    [JsonPropertyName("still_path")]
+    public string? StillPath { get; set; }
+
+    [JsonPropertyName("episode_number")]
+    public int EpisodeNumber { get; set; }
+
+    [JsonPropertyName("season_number")]
+    public int SeasonNumber { get; set; }
+
+    [JsonPropertyName("air_date")]
+    public string? AirDate { get; set; }
+
+    [JsonPropertyName("runtime")]
+    public int? Runtime { get; set; }
+}

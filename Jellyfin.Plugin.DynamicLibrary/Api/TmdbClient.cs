@@ -159,6 +159,82 @@ public class TmdbClient : ITmdbClient
         }
     }
 
+    public async Task<TmdbSeriesDetails?> GetSeriesByExternalIdAsync(string externalId, CancellationToken cancellationToken = default)
+    {
+        if (!IsConfigured)
+        {
+            return null;
+        }
+
+        try
+        {
+            var client = CreateClient();
+            var language = GetLanguageCode();
+            var languageParam = !string.IsNullOrEmpty(language) ? $"&language={language}" : "";
+            
+            // 1. Find the series ID using the external ID (IMDB)
+            var findUrl = AppendApiKey($"{BaseUrl}/find/{externalId}?external_source=imdb_id{languageParam}");
+            _logger.LogDebug("Finding TMDB series by external ID: {ExternalId}", externalId);
+
+            var findResponse = await client.GetAsync(findUrl, cancellationToken);
+            if (!findResponse.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("TMDB find failed: {StatusCode}", findResponse.StatusCode);
+                return null;
+            }
+
+            var findResult = await findResponse.Content.ReadFromJsonAsync<TmdbFindResponse>(cancellationToken);
+            var series = findResult?.TvResults.FirstOrDefault();
+
+            if (series == null)
+            {
+                _logger.LogWarning("No TMDB series found for external ID: {ExternalId}", externalId);
+                return null;
+            }
+
+            // 2. Fetch full series details
+            // Note: We need to fetch all seasons to get episodes. TMDB doesn't return episodes in the main series detail call.
+            // We have to iterate seasons and fetch them individually, OR use append_to_response if we know the season numbers?
+            // append_to_response is limited.
+            // For now, let's get the series details, which gives us the season list.
+            var detailsUrl = AppendApiKey($"{BaseUrl}/tv/{series.Id}?{languageParam}");
+            var detailsResponse = await client.GetAsync(detailsUrl, cancellationToken);
+            
+            if (!detailsResponse.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var fullDetails = await detailsResponse.Content.ReadFromJsonAsync<TmdbSeriesDetails>(cancellationToken);
+            if (fullDetails == null) return null;
+
+            // 3. Fetch episodes for ALL seasons (Parallel)
+            // We need this to map episodes correctly
+            if (fullDetails.Seasons != null)
+            {
+                var seasonTasks = fullDetails.Seasons.Select(async season =>
+                {
+                    var seasonUrl = AppendApiKey($"{BaseUrl}/tv/{series.Id}/season/{season.SeasonNumber}?{languageParam}");
+                    var seasonResp = await client.GetAsync(seasonUrl, cancellationToken);
+                    if (seasonResp.IsSuccessStatusCode)
+                    {
+                        var seasonData = await seasonResp.Content.ReadFromJsonAsync<TmdbSeasonData>(cancellationToken);
+                        season.Episodes = seasonData?.Episodes;
+                    }
+                });
+
+                await Task.WhenAll(seasonTasks);
+            }
+
+            return fullDetails;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching TMDB series by external ID: {ExternalId}", externalId);
+            return null;
+        }
+    }
+
     public async Task<string> GetImageBaseUrlAsync(CancellationToken cancellationToken = default)
     {
         if (!string.IsNullOrEmpty(_imageBaseUrl))

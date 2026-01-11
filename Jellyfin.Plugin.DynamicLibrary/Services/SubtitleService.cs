@@ -144,8 +144,9 @@ public class SubtitleService
             return cached;
         }
 
-        // Get parent IMDB ID from series
+        // Get parent IMDB ID from series or episode metadata
         var parentImdbId = series?.ProviderIds?.GetValueOrDefault("Imdb")
+            ?? episode.ProviderIds?.GetValueOrDefault("SeriesImdb")
             ?? episode.ProviderIds?.GetValueOrDefault("Imdb");
 
         if (string.IsNullOrEmpty(parentImdbId))

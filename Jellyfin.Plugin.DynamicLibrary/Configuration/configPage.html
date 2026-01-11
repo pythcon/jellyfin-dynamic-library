@@ -74,9 +74,16 @@
             </div>
           </div>
 
-          <div id="directApiSettings">
           <div class="verticalSection">
             <h3 class="sectionTitle">API Keys</h3>
+
+            <div id="apiKeyInfo" style="background: #1a1a1a; border-left: 4px solid #00a4dc; padding: 1em; margin: 1em 0; display: none;">
+              <p style="margin: 0; font-size: 0.95em;">
+                <strong>Stremio Users:</strong> API keys are <em>optional</em> but highly recommended.
+                Providing a TVDB key enables <strong>Official Order Enforcement</strong>, which fixes messy season structures
+                (like Dragon Ball Super being split into 5 seasons) and ensures accurate anime subtitles.
+              </p>
+            </div>
 
             <div class="inputContainer">
               <label class="inputLabel inputLabelUnfocused" for="txtTvdbApiKey">TVDB API Key:</label>
@@ -100,7 +107,8 @@
           <div class="verticalSection">
             <h3 class="sectionTitle">Content Sources</h3>
             <p class="fieldDescription" style="margin-bottom: 1em;">
-              Select which API to use for each content type. Set to "Disabled" to skip searching that type.
+              Select which API to use for each content type. These settings apply when <strong>Catalog Provider</strong> is set to <em>Direct</em>, 
+              or for metadata enrichment when using <em>Stremio Addon</em>.
             </p>
 
             <div class="inputContainer">
@@ -135,7 +143,6 @@
               <div class="fieldDescription">Maximum number of TV show/anime results to return (1-100).</div>
             </div>
           </div>
-          </div><!-- End directApiSettings -->
 
           <div class="verticalSection">
             <h3 class="sectionTitle">Provider ID Preferences</h3>
@@ -603,7 +610,7 @@
 
         // Cache DOM elements - conditional containers
         const stremioCatalogSettings = document.querySelector('#stremioCatalogSettings');
-        const directApiSettings = document.querySelector('#directApiSettings');
+        const apiKeyInfo = document.querySelector('#apiKeyInfo');
         const embedarrSettings = document.querySelector('#embedarrSettings');
         const directSettings = document.querySelector('#directSettings');
         const languageOverrideContainer = document.querySelector('#languageOverrideContainer');
@@ -611,7 +618,7 @@
         function updateCatalogProviderVisibility() {
           const provider = selCatalogProvider.value;
           stremioCatalogSettings.style.display = provider === 'StremioAddon' ? 'block' : 'none';
-          directApiSettings.style.display = provider === 'Direct' ? 'block' : 'none';
+          apiKeyInfo.style.display = provider === 'StremioAddon' ? 'block' : 'none';
         }
 
         function updateLanguageVisibility() {

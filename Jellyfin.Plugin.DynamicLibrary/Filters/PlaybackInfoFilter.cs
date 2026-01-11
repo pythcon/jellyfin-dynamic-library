@@ -375,7 +375,14 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
 
         _logger.LogDebug("[DynamicLibrary] Got stream URL for {Name}: {Url}", cachedItem.Name, streamUrl);
 
-        var response2 = BuildPlaybackInfoResponse(cachedItem, streamUrl);
+        List<CachedSubtitle>? embedarrSubtitles = null;
+        if (_subtitleService.IsEnabled)
+        {
+            embedarrSubtitles = await FetchSubtitlesAsync(cachedItem, context.HttpContext.RequestAborted);
+            _logger.LogDebug("[DynamicLibrary] Fetched {Count} subtitles for {Name}", embedarrSubtitles?.Count ?? 0, cachedItem.Name);
+        }
+
+        var response2 = BuildPlaybackInfoResponse(cachedItem, streamUrl, embedarrSubtitles);
         context.Result = new OkObjectResult(response2);
     }
 
@@ -942,9 +949,9 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
     /// <summary>
     /// Build PlaybackInfoResponse with a single MediaSource.
     /// </summary>
-    private PlaybackInfoResponse BuildPlaybackInfoResponse(BaseItemDto item, string streamUrl)
+    private PlaybackInfoResponse BuildPlaybackInfoResponse(BaseItemDto item, string streamUrl, List<CachedSubtitle>? subtitles = null)
     {
-        return BuildPlaybackInfoResponse(item, new List<(string, string)> { (streamUrl, string.Empty) }, null);
+        return BuildPlaybackInfoResponse(item, new List<(string, string)> { (streamUrl, string.Empty) }, subtitles);
     }
 
     /// <summary>
@@ -1153,7 +1160,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
     /// <summary>
     /// Parse a DynamicLibrary placeholder URL and build the actual stream URL.
     /// Format: dynamiclibrary://movie/{id}
-    ///         dynamiclibrary://tv/{id}/{season}/{episode}
+    ///         dynamiclibrary://tv/{id}/{season}/{episode}?stremioS={s}&stremioE={e}
     ///         dynamiclibrary://anime/{id}/{episode}/{audio}
     /// </summary>
     private string? BuildStreamUrlFromPath(string path)
@@ -1163,6 +1170,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             var uri = new Uri(path);
             var type = uri.Host; // "movie", "tv", or "anime"
             var segments = uri.AbsolutePath.Trim('/').Split('/');
+            var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
 
             var config = Config;
 
@@ -1181,24 +1189,33 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                 var template = config.DirectTvUrlTemplate;
                 if (string.IsNullOrEmpty(template)) return null;
 
+                // Check for Stremio overrides in query string
+                var seasonStr = query["stremioS"] ?? segments[1];
+                var episodeStr = query["stremioE"] ?? segments[2];
+
                 return template
                     .Replace("{id}", segments[0], StringComparison.OrdinalIgnoreCase)
                     .Replace("{imdb}", segments[0], StringComparison.OrdinalIgnoreCase)
                     .Replace("{tvdb}", segments[0], StringComparison.OrdinalIgnoreCase)
-                    .Replace("{season}", segments[1], StringComparison.OrdinalIgnoreCase)
-                    .Replace("{episode}", segments[2], StringComparison.OrdinalIgnoreCase);
+                    .Replace("{season}", seasonStr, StringComparison.OrdinalIgnoreCase)
+                    .Replace("{episode}", episodeStr, StringComparison.OrdinalIgnoreCase);
             }
             else if (type.Equals("anime", StringComparison.OrdinalIgnoreCase) && segments.Length >= 2)
             {
                 var template = config.DirectAnimeUrlTemplate;
                 if (string.IsNullOrEmpty(template)) return null;
 
+                // Anime usually uses absolute numbering in path, but check for overrides
+                // Note: Anime URL structure in path is {id}/{episode}/{audio}
+                // The 'episode' segment here is often the absolute number for anime
+                var episodeStr = query["stremioE"] ?? segments[1];
                 var audio = segments.Length > 2 ? segments[2] : "sub";
+
                 return template
                     .Replace("{id}", segments[0], StringComparison.OrdinalIgnoreCase)
                     .Replace("{anilist}", segments[0], StringComparison.OrdinalIgnoreCase)
-                    .Replace("{episode}", segments[1], StringComparison.OrdinalIgnoreCase)
-                    .Replace("{absolute}", segments[1], StringComparison.OrdinalIgnoreCase)
+                    .Replace("{episode}", episodeStr, StringComparison.OrdinalIgnoreCase)
+                    .Replace("{absolute}", episodeStr, StringComparison.OrdinalIgnoreCase)
                     .Replace("{audio}", audio, StringComparison.OrdinalIgnoreCase);
             }
 
@@ -1384,6 +1401,15 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         _logger.LogDebug("[DynamicLibrary] AIOStreams returned {Count} streams for {Name}",
             response.Streams.Count, item.Name);
 
+        // Fetch subtitles for dynamic AIOStreams items
+        List<CachedSubtitle>? subtitles = null;
+        if (_subtitleService.IsEnabled)
+        {
+            subtitles = await FetchSubtitlesAsync(item, cancellationToken);
+            _logger.LogDebug("[DynamicLibrary] Fetched {Count} subtitles for dynamic AIOStreams item {Name}",
+                subtitles?.Count ?? 0, item.Name);
+        }
+
         // Get runtime - this is critical for Android TV and other players that need runtime for scrubbing
         long? runTimeTicks = item.RunTimeTicks;
         _logger.LogInformation("[DynamicLibrary] RunTimeTicks for {Name}: Initial={InitialTicks} (from item), Type={Type}",
@@ -1434,7 +1460,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                     selectedMediaSourceId, streamUrl);
 
                 // Return single MediaSource with the selected stream URL
-                return BuildAIOStreamsSingleResponse(item, streamUrl, selectedMediaSourceId, runTimeTicks);
+                return BuildAIOStreamsSingleResponse(item, streamUrl, selectedMediaSourceId, runTimeTicks, subtitles);
             }
 
             _logger.LogDebug("[DynamicLibrary] Selected MediaSource {Id} not found in cache, showing all streams",
@@ -1463,11 +1489,13 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             // Detect container from URL/filename
             var container = StreamContainerHelper.DetectContainer(stream.Url, filename);
 
-            // HLS: don't add fake MediaStreams - player parses them from the m3u8
-            // Non-HLS (MP4, MKV, etc.): need default streams for player metadata
+            var subtitleStreams = BuildSubtitleMediaStreams(item.Id, sourceId, subtitles);
+
+            // HLS: only include subtitle streams (video/audio parsed from m3u8)
+            // Non-HLS: need default streams plus subtitles
             var mediaStreams = container == "hls"
-                ? new List<MediaStream>()
-                : BuildDefaultMediaStreams();
+                ? subtitleStreams
+                : BuildDefaultMediaStreams().Concat(subtitleStreams).ToList();
 
             mediaSources.Add(new MediaSourceInfo
             {
@@ -1778,7 +1806,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
     /// <summary>
     /// Build a single-stream PlaybackInfoResponse for AIOStreams.
     /// </summary>
-    private PlaybackInfoResponse BuildAIOStreamsSingleResponse(BaseItemDto item, string streamUrl, string mediaSourceId, long? runTimeTicks)
+    private PlaybackInfoResponse BuildAIOStreamsSingleResponse(BaseItemDto item, string streamUrl, string mediaSourceId, long? runTimeTicks, List<CachedSubtitle>? subtitles = null)
     {
         // Get the mapping to retrieve filename hint for container detection
         var mapping = _itemCache.GetAIOStreamsMapping(mediaSourceId);
@@ -1787,11 +1815,13 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         _logger.LogInformation("[DynamicLibrary] BuildAIOStreamsSingleResponse for {Name}: RunTimeTicks={Ticks}, Container={Container}",
             item.Name, runTimeTicks, container);
 
-        // HLS: don't add fake MediaStreams - player parses them from the m3u8
-        // Non-HLS: need default video/audio streams for player metadata
+        var subtitleStreams = BuildSubtitleMediaStreams(item.Id, mediaSourceId, subtitles);
+
+        // HLS: only include subtitle streams (video/audio parsed from m3u8)
+        // Non-HLS: need default video/audio streams plus subtitles
         var mediaStreams = container == "hls"
-            ? new List<MediaStream>()
-            : BuildDefaultMediaStreams();
+            ? subtitleStreams
+            : BuildDefaultMediaStreams().Concat(subtitleStreams).ToList();
 
         var mediaSource = new MediaSourceInfo
         {
@@ -1857,24 +1887,78 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             }
         }
 
-        // Fallback to default duration if API lookup failed or no library item
+        // Try to fetch subtitles for the item (persisted or cached)
+        List<CachedSubtitle>? subtitles = null;
+        BaseItemDto? cachedItem = null;
+        if (_subtitleService.IsEnabled)
+        {
+            if (libraryItem != null)
+            {
+                subtitles = await FetchSubtitlesForPersistedItemAsync(libraryItem, cancellationToken);
+            }
+            else
+            {
+                cachedItem = _itemCache.GetItem(itemId);
+                if (cachedItem != null)
+                {
+                    subtitles = await FetchSubtitlesAsync(cachedItem, cancellationToken);
+                }
+            }
+        }
+        else
+        {
+            cachedItem = _itemCache.GetItem(itemId);
+        }
+
+        cachedItem ??= _itemCache.GetItem(itemId);
+
+        if (cachedItem != null)
+        {
+            if ((string.IsNullOrEmpty(itemName) || itemName == "Stream") && !string.IsNullOrEmpty(cachedItem.Name))
+            {
+                itemName = cachedItem.Name!;
+            }
+
+            if (!runTimeTicks.HasValue || runTimeTicks.Value <= 0)
+            {
+                var cachedRuntime = cachedItem.RunTimeTicks ?? 0;
+                if (cachedRuntime > 0)
+                {
+                    runTimeTicks = cachedRuntime;
+                    _logger.LogDebug("[DynamicLibrary] BuildAIOStreamsDirectResponseAsync: Using cached runtime for {Name}: {Ticks}",
+                        itemName, cachedRuntime);
+                }
+            }
+        }
+
+        // Fallback to default duration if API lookup failed or no metadata available
         if (!runTimeTicks.HasValue || runTimeTicks.Value <= 0)
         {
-            // Use smart defaults based on item type
-            var defaultMinutes = libraryItem is MediaBrowser.Controller.Entities.TV.Episode ? 24 : 120;
+            var isEpisode = libraryItem is MediaBrowser.Controller.Entities.TV.Episode
+                || cachedItem?.Type == BaseItemKind.Episode;
+
+            // Use smarter defaults (anime detection relies on cached info)
+            var defaultMinutes = isEpisode ? 45 : 120;
+            if (cachedItem != null && DynamicLibraryService.IsAnime(cachedItem))
+            {
+                defaultMinutes = 24;
+            }
+
             runTimeTicks = defaultMinutes * 60L * 10_000_000L;
             _logger.LogWarning("[DynamicLibrary] BuildAIOStreamsDirectResponseAsync: Using fallback runtime {Minutes} min for {Name}",
                 defaultMinutes, itemName);
         }
 
+        var subtitleStreams = subtitles != null ? BuildSubtitleMediaStreams(itemId, mediaSourceId, subtitles) : new List<MediaStream>();
+
         _logger.LogInformation("[DynamicLibrary] BuildAIOStreamsDirectResponse: Final RunTimeTicks={Ticks}, Container={Container}",
             runTimeTicks, container);
 
-        // HLS: don't add fake MediaStreams - player parses them from the m3u8
-        // Non-HLS (MP4, etc.): need default video/audio streams for player metadata
+        // HLS: only include subtitle streams - player parses audio/video from m3u8
+        // Non-HLS: need default video/audio streams plus subtitles
         var mediaStreams = container == "hls"
-            ? new List<MediaStream>()
-            : BuildDefaultMediaStreams();
+            ? subtitleStreams
+            : BuildDefaultMediaStreams().Concat(subtitleStreams).ToList();
 
         var mediaSource = new MediaSourceInfo
         {

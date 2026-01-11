@@ -189,6 +189,12 @@ public class TvdbClient : ITvdbClient
             // Request both episodes and translations metadata
             var url = $"{BaseUrl}/series/{seriesId}/extended?meta=episodes&meta=translations";
             var language = GetLanguageCode();
+            
+            if (!string.IsNullOrEmpty(language))
+            {
+                // TVDB v4 supports 'lang' parameter for localization
+                url += $"&lang={language}";
+            }
 
             _logger.LogDebug("Fetching TVDB series: {SeriesId} (language: {Language})", seriesId, language ?? "default");
 
@@ -216,6 +222,27 @@ public class TvdbClient : ITvdbClient
             _logger.LogError(ex, "Error fetching TVDB series: {SeriesId}", seriesId);
             return null;
         }
+    }
+
+    public async Task<TvdbSeriesExtended?> GetSeriesByRemoteIdAsync(string remoteId, CancellationToken cancellationToken = default)
+    {
+        if (!IsConfigured)
+        {
+            return null;
+        }
+
+        // Try to search for the series using the remote ID (e.g. IMDB ID)
+        var results = await SearchSeriesAsync(remoteId, cancellationToken);
+        var match = results.FirstOrDefault();
+
+        if (match != null && match.TvdbIdInt > 0)
+        {
+            _logger.LogDebug("Found TVDB series {TvdbId} for remote ID {RemoteId}", match.TvdbId, remoteId);
+            return await GetSeriesExtendedAsync(match.TvdbIdInt, cancellationToken);
+        }
+
+        _logger.LogWarning("No TVDB series found for remote ID: {RemoteId}", remoteId);
+        return null;
     }
 
     public async Task<TvdbTranslationData?> GetSeriesTranslationAsync(int seriesId, string language, CancellationToken cancellationToken = default)
