@@ -57,6 +57,24 @@ A Jellyfin plugin that creates an "infinite library" by displaying content from 
 - Full metadata including posters, backdrops, cast, descriptions, and ratings
 - Virtual items are distinguished by a `DynamicLibrary` provider ID
 
+### Dynamic Media Metadata
+Dynamic items display rich metadata sourced from TMDB and Stremio addons:
+
+| Field | TMDB Direct | Stremio |
+|-------|:-----------:|:-------:|
+| Poster / Backdrop | Yes | Yes |
+| Logo | Yes | Yes |
+| Tagline | Yes | Yes |
+| Studios | Yes | Yes |
+| Cast & Directors | Yes | Yes |
+| Writers | Yes | Yes |
+| Content Rating (e.g., PG-13) | Yes | — |
+| Keywords / Tags | Yes | — |
+| Countries | — | Yes |
+| Status (Released, etc.) | Yes | Yes |
+
+TMDB metadata is fetched in a single API call using `append_to_response` (credits, release_dates, keywords, and images).
+
 ### Catalog Providers
 - **Stremio Addon**: Use Cinemeta, AIOMetadata, or any compatible Stremio addon
 - **Direct APIs**: Query TVDB/TMDB directly for metadata

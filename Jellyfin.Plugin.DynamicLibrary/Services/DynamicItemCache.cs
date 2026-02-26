@@ -20,6 +20,7 @@ public class DynamicItemCache
 
     private const string ItemPrefix = "dynamic_item:";
     private const string ImagePrefix = "dynamic_image:";
+    private const string BackdropPrefix = "dynamic_backdrop:";
     private const string SeasonsPrefix = "dynamic_seasons:";
     private const string EpisodesPrefix = "dynamic_episodes:";
     private const string EmbedarrAddedPrefix = "embedarr_added:";
@@ -27,6 +28,7 @@ public class DynamicItemCache
     private const string SubtitlesPrefix = "dynamic_subtitles:";
     private const string SelectedMediaSourcePrefix = "selected_mediasource:";
     private const string AIOStreamsPrefix = "aiostreams_stream:";
+    private const string LogoPrefix = "dynamic_logo:";
     private const string CatalogSourcePrefix = "catalog_source:";
 
     public DynamicItemCache(IMemoryCache cache, ILogger<DynamicItemCache> logger)
@@ -38,7 +40,7 @@ public class DynamicItemCache
     /// <summary>
     /// Store a dynamic item in the cache.
     /// </summary>
-    public void StoreItem(BaseItemDto item, string? imageUrl = null)
+    public void StoreItem(BaseItemDto item, string? imageUrl = null, string? backdropUrl = null)
     {
         if (item.Id == Guid.Empty)
         {
@@ -55,8 +57,14 @@ public class DynamicItemCache
             _cache.Set(imageKey, imageUrl, _cacheDuration);
         }
 
-        _logger.LogDebug("[DynamicItemCache] Stored item: {Name} ({Id}), HasImage: {HasImage}",
-            item.Name, item.Id, !string.IsNullOrEmpty(imageUrl));
+        if (!string.IsNullOrEmpty(backdropUrl))
+        {
+            var backdropKey = $"{BackdropPrefix}{item.Id}";
+            _cache.Set(backdropKey, backdropUrl, _cacheDuration);
+        }
+
+        _logger.LogDebug("[DynamicItemCache] Stored item: {Name} ({Id}), HasImage: {HasImage}, HasBackdrop: {HasBackdrop}",
+            item.Name, item.Id, !string.IsNullOrEmpty(imageUrl), !string.IsNullOrEmpty(backdropUrl));
     }
 
     /// <summary>
@@ -74,6 +82,34 @@ public class DynamicItemCache
     public string? GetImageUrl(Guid itemId)
     {
         var key = $"{ImagePrefix}{itemId}";
+        return _cache.TryGetValue<string>(key, out var url) ? url : null;
+    }
+
+    /// <summary>
+    /// Get the backdrop image URL for a dynamic item.
+    /// </summary>
+    public string? GetBackdropUrl(Guid itemId)
+    {
+        var key = $"{BackdropPrefix}{itemId}";
+        return _cache.TryGetValue<string>(key, out var url) ? url : null;
+    }
+
+    /// <summary>
+    /// Store a logo image URL for a dynamic item.
+    /// </summary>
+    public void StoreLogoUrl(Guid itemId, string logoUrl)
+    {
+        var key = $"{LogoPrefix}{itemId}";
+        _cache.Set(key, logoUrl, _cacheDuration);
+        _logger.LogDebug("[DynamicItemCache] Stored logo URL for item {ItemId}", itemId);
+    }
+
+    /// <summary>
+    /// Get the logo image URL for a dynamic item.
+    /// </summary>
+    public string? GetLogoUrl(Guid itemId)
+    {
+        var key = $"{LogoPrefix}{itemId}";
         return _cache.TryGetValue<string>(key, out var url) ? url : null;
     }
 

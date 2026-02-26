@@ -97,6 +97,11 @@ public class CatalogItem
     /// Original language code.
     /// </summary>
     public string? OriginalLanguage { get; set; }
+
+    /// <summary>
+    /// URL to logo image.
+    /// </summary>
+    public string? LogoUrl { get; set; }
 }
 
 /// <summary>
@@ -149,6 +154,21 @@ public class CatalogItemDetails : CatalogItem
     /// Country/countries of origin.
     /// </summary>
     public List<string> Countries { get; set; } = new();
+
+    /// <summary>
+    /// Writers (screenplay, story).
+    /// </summary>
+    public List<string> Writers { get; set; } = new();
+
+    /// <summary>
+    /// Content rating (e.g., "PG-13", "R").
+    /// </summary>
+    public string? OfficialRating { get; set; }
+
+    /// <summary>
+    /// Keyword tags.
+    /// </summary>
+    public List<string> Tags { get; set; } = new();
 }
 
 /// <summary>

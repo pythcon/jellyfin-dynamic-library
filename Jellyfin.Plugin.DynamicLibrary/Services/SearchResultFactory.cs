@@ -128,8 +128,22 @@ public class SearchResultFactory
             dto.PrimaryImageAspectRatio = isMovie ? 0.667 : 0.667; // Standard poster ratio (2:3)
         }
 
+        // Set backdrop image tags if backdrop URL is available
+        if (!string.IsNullOrEmpty(item.BackdropUrl))
+        {
+            dto.BackdropImageTags = new[] { "dynamic" };
+        }
+
+        // Set logo image tag if logo URL is available
+        if (!string.IsNullOrEmpty(item.LogoUrl))
+        {
+            dto.ImageTags ??= new Dictionary<ImageType, string>();
+            dto.ImageTags[ImageType.Logo] = "dynamic";
+            _itemCache.StoreLogoUrl(dto.Id, item.LogoUrl);
+        }
+
         // Store in cache for later retrieval
-        _itemCache.StoreItem(dto, item.PosterUrl);
+        _itemCache.StoreItem(dto, item.PosterUrl, item.BackdropUrl);
 
         // Store the CatalogItem source for enrichment later
         _itemCache.StoreCatalogSource(dto.Id, item.Source);
@@ -391,13 +405,69 @@ public class SearchResultFactory
             dto.People = people.ToArray();
         }
 
+        // Status
+        if (!string.IsNullOrEmpty(details.Status))
+        {
+            dto.Status = details.Status;
+        }
+
+        // Content rating from release dates
+        if (details.ReleaseDates?.Results != null)
+        {
+            var usCerts = details.ReleaseDates.Results
+                .FirstOrDefault(r => r.Iso31661 == "US");
+            var cert = usCerts?.ReleaseDates
+                .Where(rd => !string.IsNullOrEmpty(rd.Certification))
+                .Select(rd => rd.Certification)
+                .FirstOrDefault();
+            if (string.IsNullOrEmpty(cert))
+            {
+                cert = details.ReleaseDates.Results
+                    .SelectMany(r => r.ReleaseDates)
+                    .Where(rd => !string.IsNullOrEmpty(rd.Certification))
+                    .Select(rd => rd.Certification)
+                    .FirstOrDefault();
+            }
+            if (!string.IsNullOrEmpty(cert))
+            {
+                dto.OfficialRating = cert;
+            }
+        }
+
+        // Keywords/Tags
+        if (details.Keywords?.Keywords != null && details.Keywords.Keywords.Count > 0)
+        {
+            dto.Tags = details.Keywords.Keywords.Select(k => k.Name).ToArray();
+        }
+
+        // Logo image
+        if (details.Images?.Logos != null && details.Images.Logos.Count > 0)
+        {
+            var bestLogo = details.Images.Logos
+                .Where(l => l.Iso6391 == "en" || l.Iso6391 == null)
+                .OrderByDescending(l => l.VoteAverage)
+                .FirstOrDefault() ?? details.Images.Logos.First();
+            var logoUrl = $"{imageBaseUrl}original{bestLogo.FilePath}";
+            _itemCache.StoreLogoUrl(dto.Id, logoUrl);
+            dto.ImageTags ??= new Dictionary<ImageType, string>();
+            dto.ImageTags[ImageType.Logo] = "dynamic";
+        }
+
         // Update cache with enriched data
         string? imageUrl = null;
         if (!string.IsNullOrEmpty(details.PosterPath))
         {
             imageUrl = $"{imageBaseUrl}w500{details.PosterPath}";
         }
-        _itemCache.StoreItem(dto, imageUrl);
+
+        string? backdropUrl = null;
+        if (!string.IsNullOrEmpty(details.BackdropPath))
+        {
+            backdropUrl = $"{imageBaseUrl}original{details.BackdropPath}";
+            dto.BackdropImageTags = new[] { "dynamic" };
+        }
+
+        _itemCache.StoreItem(dto, imageUrl, backdropUrl);
 
         return dto;
     }
@@ -595,8 +665,15 @@ public class SearchResultFactory
             }
         }
 
+        // Preserve any existing backdrop from search result
+        var existingBackdropUrl = _itemCache.GetBackdropUrl(dto.Id);
+        if (!string.IsNullOrEmpty(existingBackdropUrl))
+        {
+            dto.BackdropImageTags = new[] { "dynamic" };
+        }
+
         // Store series in cache BEFORE creating episodes (so episodes can look it up with all provider IDs)
-        _itemCache.StoreItem(dto, _itemCache.GetImageUrl(dto.Id));
+        _itemCache.StoreItem(dto, _itemCache.GetImageUrl(dto.Id), existingBackdropUrl);
 
         // Get series IMDB ID to pass to episodes
         var seriesImdbId = dto.ProviderIds?.TryGetValue("Imdb", out var imdb) == true ? imdb : null;
@@ -631,8 +708,15 @@ public class SearchResultFactory
         // Update DTO with details from Stremio
         EnrichDtoFromCatalogItemDetails(dto, details);
 
+        // Set backdrop image tags if backdrop URL is available
+        var backdropUrl = details.BackdropUrl ?? _itemCache.GetBackdropUrl(dto.Id);
+        if (!string.IsNullOrEmpty(backdropUrl))
+        {
+            dto.BackdropImageTags = new[] { "dynamic" };
+        }
+
         // Update cache with enriched data
-        _itemCache.StoreItem(dto, details.PosterUrl ?? _itemCache.GetImageUrl(dto.Id));
+        _itemCache.StoreItem(dto, details.PosterUrl ?? _itemCache.GetImageUrl(dto.Id), backdropUrl);
 
         _logger.LogDebug("[DynamicLibrary] EnrichMovieFromStremio: Enriched '{Name}' with runtime={Runtime}, genres={Genres}",
             dto.Name, dto.RunTimeTicks, dto.Genres != null ? string.Join(",", dto.Genres) : "none");
@@ -664,8 +748,15 @@ public class SearchResultFactory
         // Update DTO with details from Stremio
         EnrichDtoFromCatalogItemDetails(dto, details);
 
+        // Set backdrop image tags if backdrop URL is available
+        var backdropUrl = details.BackdropUrl ?? _itemCache.GetBackdropUrl(dto.Id);
+        if (!string.IsNullOrEmpty(backdropUrl))
+        {
+            dto.BackdropImageTags = new[] { "dynamic" };
+        }
+
         // Store series in cache BEFORE creating episodes
-        _itemCache.StoreItem(dto, details.PosterUrl ?? _itemCache.GetImageUrl(dto.Id));
+        _itemCache.StoreItem(dto, details.PosterUrl ?? _itemCache.GetImageUrl(dto.Id), backdropUrl);
 
         // Check if this is anime
         var isAnime = DynamicLibraryService.IsAnime(dto);
@@ -729,6 +820,48 @@ public class SearchResultFactory
             }).ToArray();
         }
 
+        // Tagline
+        if (!string.IsNullOrEmpty(details.Tagline))
+        {
+            dto.Taglines = new[] { details.Tagline };
+        }
+
+        // Studios
+        if (details.Studios?.Count > 0)
+        {
+            dto.Studios = details.Studios.Select(s => new NameGuidPair
+            {
+                Name = s,
+                Id = Guid.Empty
+            }).ToArray();
+        }
+
+        // Countries / ProductionLocations
+        if (details.Countries?.Count > 0)
+        {
+            dto.ProductionLocations = details.Countries.ToArray();
+        }
+
+        // OfficialRating
+        if (!string.IsNullOrEmpty(details.OfficialRating))
+        {
+            dto.OfficialRating = details.OfficialRating;
+        }
+
+        // Tags
+        if (details.Tags?.Count > 0)
+        {
+            dto.Tags = details.Tags.ToArray();
+        }
+
+        // Logo
+        if (!string.IsNullOrEmpty(details.LogoUrl))
+        {
+            _itemCache.StoreLogoUrl(dto.Id, details.LogoUrl);
+            dto.ImageTags ??= new Dictionary<ImageType, string>();
+            dto.ImageTags[ImageType.Logo] = "dynamic";
+        }
+
         // Cast
         if (details.Cast?.Count > 0)
         {
@@ -748,6 +881,19 @@ public class SearchResultFactory
                     {
                         Name = director,
                         Type = PersonKind.Director
+                    });
+                }
+            }
+
+            // Add writers if available
+            if (details.Writers?.Count > 0)
+            {
+                foreach (var writer in details.Writers)
+                {
+                    people.Add(new BaseItemPerson
+                    {
+                        Name = writer,
+                        Type = PersonKind.Writer
                     });
                 }
             }

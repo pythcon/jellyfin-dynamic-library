@@ -123,6 +123,18 @@ public class TmdbMovieDetails
     [JsonPropertyName("credits")]
     public TmdbCredits? Credits { get; set; }
 
+    // Release dates (when using append_to_response=release_dates)
+    [JsonPropertyName("release_dates")]
+    public TmdbReleaseDatesResult? ReleaseDates { get; set; }
+
+    // Keywords (when using append_to_response=keywords)
+    [JsonPropertyName("keywords")]
+    public TmdbKeywordsResult? Keywords { get; set; }
+
+    // Images (when using append_to_response=images)
+    [JsonPropertyName("images")]
+    public TmdbImagesResult? Images { get; set; }
+
     public int? Year => !string.IsNullOrEmpty(ReleaseDate) && ReleaseDate.Length >= 4
         ? int.TryParse(ReleaseDate[..4], out var year) ? year : null
         : null;
@@ -340,4 +352,70 @@ public class TmdbEpisode
 
     [JsonPropertyName("runtime")]
     public int? Runtime { get; set; }
+}
+
+// ==================== Release Dates ====================
+
+public class TmdbReleaseDatesResult
+{
+    [JsonPropertyName("results")]
+    public List<TmdbReleaseDateCountry> Results { get; set; } = new();
+}
+
+public class TmdbReleaseDateCountry
+{
+    [JsonPropertyName("iso_3166_1")]
+    public string Iso31661 { get; set; } = string.Empty;
+
+    [JsonPropertyName("release_dates")]
+    public List<TmdbReleaseDateEntry> ReleaseDates { get; set; } = new();
+}
+
+public class TmdbReleaseDateEntry
+{
+    [JsonPropertyName("certification")]
+    public string Certification { get; set; } = string.Empty;
+
+    [JsonPropertyName("type")]
+    public int Type { get; set; }
+}
+
+// ==================== Keywords ====================
+
+public class TmdbKeywordsResult
+{
+    [JsonPropertyName("keywords")]
+    public List<TmdbKeyword> Keywords { get; set; } = new();
+}
+
+public class TmdbKeyword
+{
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+}
+
+// ==================== Images ====================
+
+public class TmdbImagesResult
+{
+    [JsonPropertyName("logos")]
+    public List<TmdbImageInfo> Logos { get; set; } = new();
+}
+
+public class TmdbImageInfo
+{
+    [JsonPropertyName("file_path")]
+    public string FilePath { get; set; } = string.Empty;
+
+    [JsonPropertyName("iso_639_1")]
+    public string? Iso6391 { get; set; }
+
+    [JsonPropertyName("vote_average")]
+    public double VoteAverage { get; set; }
+
+    [JsonPropertyName("width")]
+    public int Width { get; set; }
 }

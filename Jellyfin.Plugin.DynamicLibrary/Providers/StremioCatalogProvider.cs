@@ -243,6 +243,7 @@ public class StremioCatalogProvider : ICatalogProvider
             Overview = preview.Description,
             PosterUrl = preview.Poster,
             BackdropUrl = preview.Background,
+            LogoUrl = preview.Logo,
             Year = preview.ParsedYear,
             Rating = preview.ParsedRating,
             Type = contentType,
@@ -273,6 +274,8 @@ public class StremioCatalogProvider : ICatalogProvider
             Status = meta.Status,
             Genres = meta.Genres ?? new List<string>(),
             Directors = meta.Director ?? new List<string>(),
+            Writers = meta.Writer ?? new List<string>(),
+            LogoUrl = meta.Logo,
             Countries = !string.IsNullOrEmpty(meta.Country)
                 ? new List<string> { meta.Country }
                 : new List<string>()

@@ -1,4 +1,5 @@
 using Jellyfin.Plugin.DynamicLibrary.Services;
+using MediaBrowser.Model.Entities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Filters;
@@ -47,8 +48,23 @@ public class ImageFilter : IAsyncActionFilter, IOrderedFilter
             return;
         }
 
-        // Check if this is a dynamic item with an image in our cache
-        var imageUrl = _itemCache.GetImageUrl(itemId);
+        // Determine which image type is being requested (Primary, Backdrop, Logo, etc.)
+        string? imageUrl = null;
+        if (context.ActionArguments.TryGetValue("imageType", out var imageTypeObj) &&
+            imageTypeObj is ImageType imageType)
+        {
+            imageUrl = imageType switch
+            {
+                ImageType.Backdrop => _itemCache.GetBackdropUrl(itemId) ?? _itemCache.GetImageUrl(itemId),
+                ImageType.Logo => _itemCache.GetLogoUrl(itemId),
+                _ => _itemCache.GetImageUrl(itemId)
+            };
+        }
+        else
+        {
+            imageUrl = _itemCache.GetImageUrl(itemId);
+        }
+
         if (string.IsNullOrEmpty(imageUrl))
         {
             // Not a dynamic item with image, let Jellyfin handle it
@@ -56,8 +72,8 @@ public class ImageFilter : IAsyncActionFilter, IOrderedFilter
             return;
         }
 
-        _logger.LogDebug("[DynamicLibrary] Proxying image for dynamic item {Id} from {Url}",
-            itemId, imageUrl);
+        _logger.LogDebug("[DynamicLibrary] Proxying {ImageType} image for dynamic item {Id} from {Url}",
+            imageTypeObj ?? "Primary", itemId, imageUrl);
 
         try
         {

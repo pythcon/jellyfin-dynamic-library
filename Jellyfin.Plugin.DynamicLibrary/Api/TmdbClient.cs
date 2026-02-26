@@ -129,8 +129,8 @@ public class TmdbClient : ITmdbClient
         {
             var client = CreateClient();
             var languageParam = !string.IsNullOrEmpty(language) ? $"&language={language}" : "";
-            // Use append_to_response to get credits in the same request
-            var url = AppendApiKey($"{BaseUrl}/movie/{movieId}?append_to_response=credits{languageParam}");
+            // Use append_to_response to get credits, release dates, keywords, and images in the same request
+            var url = AppendApiKey($"{BaseUrl}/movie/{movieId}?append_to_response=credits,release_dates,keywords,images&include_image_language=en,null{languageParam}");
 
             _logger.LogDebug("Fetching TMDB movie with credits: {MovieId} (language: {Language})", movieId, language ?? "default");
 

@@ -203,6 +203,13 @@ public class DirectCatalogProvider : ICatalogProvider
                 .Where(c => c.Job.Equals("Director", StringComparison.OrdinalIgnoreCase))
                 .Select(c => c.Name)
                 .ToList();
+
+            item.Writers = details.Credits.Crew
+                .Where(c => c.Job.Equals("Writer", StringComparison.OrdinalIgnoreCase)
+                          || c.Job.Equals("Screenplay", StringComparison.OrdinalIgnoreCase))
+                .Select(c => c.Name)
+                .Distinct()
+                .ToList();
         }
 
         // Add cast
@@ -221,6 +228,42 @@ public class DirectCatalogProvider : ICatalogProvider
                     Order = c.Order
                 })
                 .ToList();
+        }
+
+        // Content rating from release dates
+        if (details.ReleaseDates?.Results != null)
+        {
+            var usCerts = details.ReleaseDates.Results
+                .FirstOrDefault(r => r.Iso31661 == "US");
+            var cert = usCerts?.ReleaseDates
+                .Where(rd => !string.IsNullOrEmpty(rd.Certification))
+                .Select(rd => rd.Certification)
+                .FirstOrDefault();
+            if (string.IsNullOrEmpty(cert))
+            {
+                cert = details.ReleaseDates.Results
+                    .SelectMany(r => r.ReleaseDates)
+                    .Where(rd => !string.IsNullOrEmpty(rd.Certification))
+                    .Select(rd => rd.Certification)
+                    .FirstOrDefault();
+            }
+            item.OfficialRating = cert;
+        }
+
+        // Keywords/Tags
+        if (details.Keywords?.Keywords != null && details.Keywords.Keywords.Count > 0)
+        {
+            item.Tags = details.Keywords.Keywords.Select(k => k.Name).ToList();
+        }
+
+        // Logo image
+        if (details.Images?.Logos != null && details.Images.Logos.Count > 0)
+        {
+            var bestLogo = details.Images.Logos
+                .Where(l => l.Iso6391 == "en" || l.Iso6391 == null)
+                .OrderByDescending(l => l.VoteAverage)
+                .FirstOrDefault() ?? details.Images.Logos.First();
+            item.LogoUrl = $"{imageBaseUrl}original{bestLogo.FilePath}";
         }
 
         return item;
