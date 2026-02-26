@@ -20,6 +20,11 @@ public interface ITmdbClient
     Task<TmdbSeriesDetails?> GetSeriesByExternalIdAsync(string externalId, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Get episodes for a specific season of a TV series (includes per-episode runtime).
+    /// </summary>
+    Task<List<TmdbEpisode>?> GetSeasonEpisodesAsync(int seriesId, int seasonNumber, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Get the base URL for images.
     /// </summary>
     Task<string> GetImageBaseUrlAsync(CancellationToken cancellationToken = default);

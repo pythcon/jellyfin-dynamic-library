@@ -235,6 +235,37 @@ public class TmdbClient : ITmdbClient
         }
     }
 
+    public async Task<List<TmdbEpisode>?> GetSeasonEpisodesAsync(int seriesId, int seasonNumber, CancellationToken cancellationToken = default)
+    {
+        if (!IsConfigured)
+        {
+            return null;
+        }
+
+        try
+        {
+            var client = CreateClient();
+            var language = GetLanguageCode();
+            var languageParam = !string.IsNullOrEmpty(language) ? $"&language={language}" : "";
+            var url = AppendApiKey($"{BaseUrl}/tv/{seriesId}/season/{seasonNumber}?{languageParam}");
+            var response = await client.GetAsync(url, cancellationToken);
+            if (response.IsSuccessStatusCode)
+            {
+                var data = await response.Content.ReadFromJsonAsync<TmdbSeasonData>(cancellationToken);
+                return data?.Episodes;
+            }
+
+            _logger.LogWarning("TMDB season fetch failed: {StatusCode} for series {SeriesId} season {Season}",
+                response.StatusCode, seriesId, seasonNumber);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error fetching TMDB season {SeasonNumber} for series {SeriesId}", seasonNumber, seriesId);
+        }
+
+        return null;
+    }
+
     public async Task<string> GetImageBaseUrlAsync(CancellationToken cancellationToken = default)
     {
         if (!string.IsNullOrEmpty(_imageBaseUrl))

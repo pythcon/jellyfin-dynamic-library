@@ -7,6 +7,7 @@ using Jellyfin.Plugin.DynamicLibrary.Configuration;
 using Jellyfin.Plugin.DynamicLibrary.Models;
 using Jellyfin.Plugin.DynamicLibrary.Providers;
 using MediaBrowser.Controller;
+using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.MediaInfo;
@@ -23,6 +24,7 @@ public class SearchResultFactory
     private readonly StremioCatalogProvider _stremioCatalogProvider;
     private readonly DynamicItemCache _itemCache;
     private readonly IServerApplicationHost _serverApplicationHost;
+    private readonly ILibraryManager _libraryManager;
     private readonly ILogger<SearchResultFactory> _logger;
 
     private const string DynamicLibraryProviderId = "DynamicLibrary";
@@ -35,6 +37,7 @@ public class SearchResultFactory
         StremioCatalogProvider stremioCatalogProvider,
         DynamicItemCache itemCache,
         IServerApplicationHost serverApplicationHost,
+        ILibraryManager libraryManager,
         ILogger<SearchResultFactory> logger)
     {
         _tmdbClient = tmdbClient;
@@ -43,6 +46,7 @@ public class SearchResultFactory
         _stremioCatalogProvider = stremioCatalogProvider;
         _itemCache = itemCache;
         _serverApplicationHost = serverApplicationHost;
+        _libraryManager = libraryManager;
         _logger = logger;
     }
 
@@ -1139,6 +1143,20 @@ public class SearchResultFactory
                     episodeDto.ProviderIds["SeriesImdb"] = seriesImdbId;
                 }
 
+                // Episode runtime (from catalog data or series fallback)
+                if (episode.RuntimeMinutes.HasValue && episode.RuntimeMinutes > 0)
+                {
+                    episodeDto.RunTimeTicks = episode.RuntimeMinutes.Value * 600_000_000L;
+                }
+                else
+                {
+                    var seriesDto = _itemCache.GetItem(seriesId);
+                    if (seriesDto?.RunTimeTicks > 0)
+                    {
+                        episodeDto.RunTimeTicks = seriesDto.RunTimeTicks.Value;
+                    }
+                }
+
                 if (!string.IsNullOrEmpty(episode.ImageUrl))
                 {
                     episodeDto.ImageTags = new Dictionary<ImageType, string>
@@ -1276,7 +1294,7 @@ public class SearchResultFactory
                 // If no source and not showing unreleased, skip
                 if (stremioSource == null && config?.ShowUnreleasedStreams != true) continue;
 
-                var episodeDto = CreateTmdbEpisodeDto(tmdbEp, seriesId, seriesName, seasonId, imageBaseUrl);
+                var episodeDto = CreateTmdbEpisodeDto(tmdbEp, seriesId, seriesName, seasonId, imageBaseUrl, tmdbSeries.Id);
 
                 if (stremioSource != null)
                 {
@@ -1319,7 +1337,7 @@ public class SearchResultFactory
             episodeDtos.Count, seriesName);
     }
 
-    private BaseItemDto CreateTmdbEpisodeDto(TmdbEpisode episode, Guid seriesId, string seriesName, Guid seasonId, string imageBaseUrl)
+    private BaseItemDto CreateTmdbEpisodeDto(TmdbEpisode episode, Guid seriesId, string seriesName, Guid seasonId, string imageBaseUrl, int tmdbSeriesId)
     {
         var episodeId = GenerateGuid($"tmdb:episode:{episode.Id}");
         
@@ -1345,10 +1363,10 @@ public class SearchResultFactory
             SeriesName = seriesName,
             PremiereDate = premiereDate,
             ProductionYear = premiereDate?.Year,
-            RunTimeTicks = episode.Runtime.HasValue ? episode.Runtime.Value * 600_000_000L : null,
             ProviderIds = new Dictionary<string, string>
             {
                 { "Tmdb", episode.Id.ToString() },
+                { "SeriesTmdb", tmdbSeriesId.ToString() },
                 { DynamicLibraryProviderId, $"tmdb:episode:{episode.Id}" }
             },
             UserData = new UserItemDataDto
@@ -1360,6 +1378,22 @@ public class SearchResultFactory
                 Played = false
             }
         };
+
+        // Runtime (convert minutes to ticks)
+        // Use episode runtime if available, otherwise fall back to series average runtime
+        if (episode.Runtime.HasValue && episode.Runtime > 0)
+        {
+            dto.RunTimeTicks = episode.Runtime.Value * 600_000_000L;
+        }
+        else
+        {
+            // Fall back to series average runtime from cache
+            var seriesDto = _itemCache.GetItem(seriesId);
+            if (seriesDto?.RunTimeTicks > 0)
+            {
+                dto.RunTimeTicks = seriesDto.RunTimeTicks.Value;
+            }
+        }
 
         string? imageUrl = !string.IsNullOrEmpty(episode.StillPath) ? $"{imageBaseUrl}w500{episode.StillPath}" : null;
         if (imageUrl != null)
@@ -2205,8 +2239,92 @@ public class SearchResultFactory
             return item.RunTimeTicks;
         }
 
-        // Try TMDB (movies)
-        if (item.ProviderIds?.TryGetValue("Tmdb", out var tmdbId) == true &&
+        // Try our own item cache (episode/movie DTOs with runtime set during creation)
+        var cachedItem = _itemCache.GetItem(item.Id);
+        if (cachedItem?.RunTimeTicks > 0)
+        {
+            _logger.LogDebug("[DynamicLibrary] Got runtime from item cache for {Name}: {Ticks} ticks", item.Name, cachedItem.RunTimeTicks);
+            return cachedItem.RunTimeTicks;
+        }
+
+        // Try TMDB per-episode runtime (for TV episodes)
+        if (item is MediaBrowser.Controller.Entities.TV.Episode tmdbEpisode &&
+            _tmdbClient.IsConfigured &&
+            tmdbEpisode.ParentIndexNumber.HasValue && tmdbEpisode.IndexNumber.HasValue)
+        {
+            int? seriesTmdbIdInt = null;
+
+            // Path 1: SeriesTmdb provider ID on episode (new episodes have this)
+            if (item.ProviderIds?.TryGetValue("SeriesTmdb", out var seriesTmdbId) == true &&
+                int.TryParse(seriesTmdbId, out var parsed))
+            {
+                seriesTmdbIdInt = parsed;
+            }
+
+            // Path 2: Look up parent series from Jellyfin's database or item cache
+            MediaBrowser.Controller.Entities.BaseItem? parentSeries = null;
+            if (!seriesTmdbIdInt.HasValue)
+            {
+                parentSeries = _libraryManager.GetItemById(tmdbEpisode.SeriesId);
+                if (parentSeries?.ProviderIds?.TryGetValue("Tmdb", out var parentTmdbId) == true &&
+                    int.TryParse(parentTmdbId, out var parentParsed))
+                {
+                    seriesTmdbIdInt = parentParsed;
+                    _logger.LogDebug("[DynamicLibrary] Got TMDB series ID {TmdbId} from parent series for episode {Name}",
+                        parentParsed, item.Name);
+                }
+            }
+
+            // Path 3: Use IMDB ID to find TMDB series via API
+            if (!seriesTmdbIdInt.HasValue)
+            {
+                string? seriesImdbId = null;
+
+                // Check episode's SeriesImdb provider ID
+                item.ProviderIds?.TryGetValue("SeriesImdb", out seriesImdbId);
+
+                // Check parent series (already looked up above) or item cache
+                if (string.IsNullOrEmpty(seriesImdbId))
+                {
+                    parentSeries?.ProviderIds?.TryGetValue("Imdb", out seriesImdbId);
+                }
+
+                if (string.IsNullOrEmpty(seriesImdbId))
+                {
+                    var seriesDto = _itemCache.GetItem(tmdbEpisode.SeriesId);
+                    seriesDto?.ProviderIds?.TryGetValue("Imdb", out seriesImdbId);
+                }
+
+                if (!string.IsNullOrEmpty(seriesImdbId))
+                {
+                    var tmdbSeries = await _tmdbClient.GetSeriesByExternalIdAsync(seriesImdbId, cancellationToken);
+                    if (tmdbSeries != null)
+                    {
+                        seriesTmdbIdInt = tmdbSeries.Id;
+                        _logger.LogDebug("[DynamicLibrary] Resolved TMDB series ID {TmdbId} from IMDB {ImdbId} for episode {Name}",
+                            tmdbSeries.Id, seriesImdbId, item.Name);
+                    }
+                }
+            }
+
+            // Fetch per-episode runtime from TMDB season data
+            if (seriesTmdbIdInt.HasValue)
+            {
+                var episodes = await _tmdbClient.GetSeasonEpisodesAsync(seriesTmdbIdInt.Value, tmdbEpisode.ParentIndexNumber.Value, cancellationToken);
+                var matchedEp = episodes?.FirstOrDefault(e => e.EpisodeNumber == tmdbEpisode.IndexNumber.Value);
+                if (matchedEp?.Runtime > 0)
+                {
+                    var ticks = matchedEp.Runtime.Value * 600_000_000L;
+                    _logger.LogInformation("[DynamicLibrary] Got per-episode runtime from TMDB for {Name}: {Minutes} min",
+                        item.Name, matchedEp.Runtime);
+                    return ticks;
+                }
+            }
+        }
+
+        // Try TMDB (movies only)
+        if (item is not MediaBrowser.Controller.Entities.TV.Episode &&
+            item.ProviderIds?.TryGetValue("Tmdb", out var tmdbId) == true &&
             int.TryParse(tmdbId, out var tmdbIdInt))
         {
             // Try cache first
@@ -2217,7 +2335,7 @@ public class SearchResultFactory
                 return cached.RunTimeTicks;
             }
 
-            // Query API
+            // Query movie API
             var details = await _tmdbClient.GetMovieDetailsAsync(tmdbIdInt, cancellationToken);
             if (details?.Runtime > 0)
             {
