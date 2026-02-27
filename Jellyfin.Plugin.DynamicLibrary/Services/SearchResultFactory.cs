@@ -2405,10 +2405,12 @@ public class SearchResultFactory
         {
             // Movie default: 120 minutes (2 hours)
             var defaultTicks = 120 * 600_000_000L;
+            _logger.LogWarning("[DynamicLibrary] GetRuntimeAsync: Using default 120-minute runtime for movie {Name}", item.Name);
             return defaultTicks;
         }
 
         // Generic fallback: 60 minutes
+        _logger.LogWarning("[DynamicLibrary] GetRuntimeAsync: Using default 60-minute runtime for {Name}", item.Name);
         return 60 * 600_000_000L;
     }
 

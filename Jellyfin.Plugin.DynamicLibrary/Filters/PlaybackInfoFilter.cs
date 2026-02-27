@@ -1442,8 +1442,8 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         {
             // Default durations: Movies = 2 hours, Episodes = 45 minutes
             var defaultMinutes = item.Type == BaseItemKind.Movie ? 120 : 45;
-            runTimeTicks = defaultMinutes * 60L * 10_000_000L; // Convert minutes to ticks
-            _logger.LogInformation("[DynamicLibrary] Using default runtime for {Name}: {Minutes} min ({Ticks} ticks)",
+            runTimeTicks = defaultMinutes * 600_000_000L;
+            _logger.LogWarning("[DynamicLibrary] Using default runtime for {Name}: {Minutes} min ({Ticks} ticks)",
                 item.Name, defaultMinutes, runTimeTicks.Value);
         }
 
@@ -1659,8 +1659,8 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         {
             // Default durations: Movies = 2 hours, Episodes = 45 minutes
             var defaultMinutes = libraryItem is Movie ? 120 : 45;
-            runTimeTicks = defaultMinutes * 60L * 10_000_000L; // Convert minutes to ticks
-            _logger.LogInformation("[DynamicLibrary] Using default runtime for persisted {Name}: {Minutes} min ({Ticks} ticks)",
+            runTimeTicks = defaultMinutes * 600_000_000L;
+            _logger.LogWarning("[DynamicLibrary] Using default runtime for persisted {Name}: {Minutes} min ({Ticks} ticks)",
                 libraryItem.Name, defaultMinutes, runTimeTicks.Value);
         }
 
@@ -1976,7 +1976,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                 defaultMinutes = 24;
             }
 
-            runTimeTicks = defaultMinutes * 60L * 10_000_000L;
+            runTimeTicks = defaultMinutes * 600_000_000L;
             _logger.LogWarning("[DynamicLibrary] BuildAIOStreamsDirectResponseAsync: Using fallback runtime {Minutes} min for {Name}",
                 defaultMinutes, itemName);
         }
