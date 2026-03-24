@@ -407,6 +407,33 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
             await PopulateAIOStreamsMediaSourcesAsync(cachedItem, context.HttpContext.RequestAborted);
         }
 
+        // For persisted items also in cache, use real UserData from database
+        // (cached items have hardcoded PlaybackPositionTicks = 0 from SearchResultFactory)
+        if (userId.HasValue)
+        {
+            var libraryItem = _libraryManager.GetItemById(itemId);
+            if (libraryItem != null)
+            {
+                var user = _userManager.GetUserById(userId.Value);
+                if (user != null)
+                {
+                    var userData = _userDataManager.GetUserData(user, libraryItem);
+                    if (userData != null)
+                    {
+                        cachedItem.UserData = new UserItemDataDto
+                        {
+                            Key = libraryItem.GetUserDataKeys().FirstOrDefault() ?? itemId.ToString("N"),
+                            PlaybackPositionTicks = userData.PlaybackPositionTicks,
+                            PlayCount = userData.PlayCount,
+                            IsFavorite = userData.IsFavorite,
+                            Played = userData.Played,
+                            LastPlayedDate = userData.LastPlayedDate
+                        };
+                    }
+                }
+            }
+        }
+
         // Return our cached item directly
         context.Result = new OkObjectResult(cachedItem);
     }
