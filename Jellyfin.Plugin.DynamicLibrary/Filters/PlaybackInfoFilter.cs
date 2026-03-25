@@ -105,6 +105,10 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                 _logger.LogInformation("[DynamicLibrary] PlaybackInfoFilter: Found AIOStreams mapping for {MediaSourceId}, returning stream URL",
                     selectedMediaSourceId);
 
+                // Store stream URL by itemId so VideoStreamFilter can find it
+                // (some clients like Swiftfin pass the itemId as the mediaSourceId for streaming)
+                _itemCache.StoreItemStreamUrl(itemId, aioStreamUrl);
+
                 var response = await BuildAIOStreamsDirectResponseAsync(itemId, aioStreamUrl, selectedMediaSourceId, context.HttpContext.RequestAborted);
                 context.Result = new OkObjectResult(response);
                 return;
@@ -166,7 +170,12 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                         {
                             _logger.LogDebug("[DynamicLibrary] Skipping stream for unreleased persisted content: {Name} (Premiere: {Date})",
                                 libraryItem.Name, premiereDate?.ToString("yyyy-MM-dd") ?? "unknown");
-                            await next();
+                            // Return empty response instead of falling through to ffprobe on dynamiclibrary:// URL
+                            context.Result = new OkObjectResult(new PlaybackInfoResponse
+                            {
+                                MediaSources = Array.Empty<MediaSourceInfo>(),
+                                PlaySessionId = Guid.NewGuid().ToString("N")
+                            });
                             return;
                         }
                     }
@@ -183,12 +192,27 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                         {
                             _logger.LogInformation("[DynamicLibrary] PlaybackInfo: Returning AIOStreams response for persisted item {Name}",
                                 libraryItem.Name);
+
+                            // Store first stream URL by itemId so VideoStreamFilter can find it
+                            // (some clients like Swiftfin pass the itemId as the mediaSourceId for streaming)
+                            var firstSource = aioResponse.MediaSources?.FirstOrDefault();
+                            if (firstSource != null && !string.IsNullOrEmpty(firstSource.Path))
+                            {
+                                _itemCache.StoreItemStreamUrl(itemId, firstSource.Path);
+                            }
+
                             context.Result = new OkObjectResult(aioResponse);
                             return;
                         }
 
                         _logger.LogWarning("[DynamicLibrary] AIOStreams returned no streams for persisted item {Name}", libraryItem.Name);
-                        await next();
+                        // Don't fall through to Jellyfin's native handler for dynamiclibrary:// URLs
+                        // as ffprobe can't handle the custom protocol and will error
+                        context.Result = new OkObjectResult(new PlaybackInfoResponse
+                        {
+                            MediaSources = Array.Empty<MediaSourceInfo>(),
+                            PlaySessionId = Guid.NewGuid().ToString("N")
+                        });
                         return;
                     }
 
@@ -270,6 +294,15 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                     }
                     _logger.LogInformation("[DynamicLibrary] PlaybackInfo: Could not build stream URL from path {Path}", dynamicLibraryUrl);
                 }
+
+                // Don't fall through to Jellyfin's native handler for dynamiclibrary:// URLs
+                // as ffprobe can't handle the custom protocol
+                context.Result = new OkObjectResult(new PlaybackInfoResponse
+                {
+                    MediaSources = Array.Empty<MediaSourceInfo>(),
+                    PlaySessionId = Guid.NewGuid().ToString("N")
+                });
+                return;
             }
 
             await next();
@@ -1516,7 +1549,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             mediaSources.Add(new MediaSourceInfo
             {
                 Id = sourceId,
-                Name = stream.DisplayName,
+                Name = SanitizeStreamName(stream.DisplayName),
                 Path = stream.Url,
                 Protocol = MediaProtocol.Http,
                 Type = MediaSourceType.Default,
@@ -1725,7 +1758,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             mediaSources.Add(new MediaSourceInfo
             {
                 Id = sourceId,
-                Name = stream.DisplayName,
+                Name = SanitizeStreamName(stream.DisplayName),
                 Path = stream.Url,
                 Protocol = MediaProtocol.Http,
                 Type = MediaSourceType.Default,
@@ -2054,6 +2087,20 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Sanitize stream display names by removing newlines and trimming whitespace.
+    /// Some providers return names with literal \n characters that can crash native clients.
+    /// </summary>
+    private static string SanitizeStreamName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return "Stream";
+        }
+
+        return name.Replace("\n", " ").Replace("\r", " ").Trim();
     }
 
     /// <summary>

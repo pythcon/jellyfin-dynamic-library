@@ -329,6 +329,28 @@ public class DynamicItemCache
         var mapping = GetAIOStreamsMapping(mediaSourceId);
         return mapping?.StreamUrl;
     }
+
+    /// <summary>
+    /// Store the active stream URL for an item, keyed by the item's own ID.
+    /// Used by VideoStreamFilter when clients pass the itemId as the mediaSourceId.
+    /// Separate from AIOStreams mappings to avoid polluting MediaSource ID lookups.
+    /// </summary>
+    public void StoreItemStreamUrl(Guid itemId, string streamUrl)
+    {
+        var key = $"item_stream_url:{itemId:N}";
+        var ttl = TimeSpan.FromMinutes(DynamicLibraryPlugin.Instance?.Configuration?.CacheTtlMinutes ?? 60);
+        _cache.Set(key, streamUrl, ttl);
+    }
+
+    /// <summary>
+    /// Get the active stream URL for an item by its ID.
+    /// Returns null if no stream URL is cached.
+    /// </summary>
+    public string? GetItemStreamUrl(Guid itemId)
+    {
+        var key = $"item_stream_url:{itemId:N}";
+        return _cache.TryGetValue<string>(key, out var url) ? url : null;
+    }
 }
 
 /// <summary>

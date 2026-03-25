@@ -54,6 +54,7 @@ public class ServiceRegistrator : IPluginServiceRegistrator
         services.AddSingleton<SeasonEpisodeFilter>();
         services.AddSingleton<PlaybackInfoFilter>();
         services.AddSingleton<SubtitleFilter>();
+        services.AddSingleton<VideoStreamFilter>();
 
         // Register filters with MVC
         services.PostConfigure<Microsoft.AspNetCore.Mvc.MvcOptions>(options =>
@@ -64,6 +65,7 @@ public class ServiceRegistrator : IPluginServiceRegistrator
             options.Filters.AddService<DynamicItemEndpointsFilter>(order: 0);   // Handle secondary endpoints
             options.Filters.AddService<SeasonEpisodeFilter>(order: 0);          // Handle seasons/episodes
             options.Filters.AddService<PlaybackInfoFilter>(order: 0);           // Handle playback info for dynamic items
+            options.Filters.AddService<VideoStreamFilter>(order: 0);            // Redirect video streams for dynamic items
             options.Filters.AddService<SubtitleFilter>(order: 0);               // Handle subtitles for dynamic items
             options.Filters.AddService<SearchActionFilter>(order: 1);
         });

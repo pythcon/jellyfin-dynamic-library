@@ -8,6 +8,7 @@ using MediaBrowser.Controller.Library;
 using Jellyfin.Database.Implementations.Entities;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Dto;
+using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.MediaInfo;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
@@ -150,8 +151,10 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
                                 Container = container,
                                 IsRemote = true,
                                 SupportsDirectPlay = true,
-                                SupportsDirectStream = true,
-                                SupportsTranscoding = false
+                                SupportsDirectStream = false,
+                                SupportsTranscoding = false,
+                                MediaStreams = BuildDefaultMediaStreams(container),
+                                Bitrate = container != "hls" ? 5_000_000 : null
                             }
                         };
                         _logger.LogInformation("[DynamicLibrary] ItemLookup: Returning {Name} with reconstructed MediaSource",
@@ -190,9 +193,11 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
                             Container = container,
                             IsRemote = true,
                             SupportsDirectPlay = true,
-                            SupportsDirectStream = true,
+                            SupportsDirectStream = false,
                             SupportsTranscoding = false,
-                            RunTimeTicks = persistedItem.RunTimeTicks
+                            RunTimeTicks = persistedItem.RunTimeTicks,
+                            MediaStreams = BuildDefaultMediaStreams(container),
+                            Bitrate = container != "hls" ? 5_000_000 : null
                         }
                     };
 
@@ -1065,19 +1070,21 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
                 mediaSources.Add(new MediaSourceInfo
                 {
                     Id = sourceId,
-                    Name = stream.DisplayName,
+                    Name = SanitizeStreamName(stream.DisplayName),
                     Path = stream.Url,
                     Protocol = MediaProtocol.Http,
                     Type = MediaSourceType.Default,
                     Container = container,
                     IsRemote = true,
                     SupportsDirectPlay = true,
-                    SupportsDirectStream = true,
+                    SupportsDirectStream = false,
                     SupportsTranscoding = false,
                     SupportsProbing = false,
                     RequiresOpening = false,
                     RequiresClosing = false,
-                    RunTimeTicks = item.RunTimeTicks
+                    RunTimeTicks = item.RunTimeTicks,
+                    MediaStreams = BuildDefaultMediaStreams(container),
+                    Bitrate = container != "hls" ? 5_000_000 : null
                 });
             }
 
@@ -1177,19 +1184,21 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
                 mediaSources.Add(new MediaSourceInfo
                 {
                     Id = sourceId,
-                    Name = stream.DisplayName,
+                    Name = SanitizeStreamName(stream.DisplayName),
                     Path = stream.Url,
                     Protocol = MediaProtocol.Http,
                     Type = MediaSourceType.Default,
                     Container = container,
                     IsRemote = true,
                     SupportsDirectPlay = true,
-                    SupportsDirectStream = true,
+                    SupportsDirectStream = false,
                     SupportsTranscoding = false,
                     SupportsProbing = false,
                     RequiresOpening = false,
                     RequiresClosing = false,
-                    RunTimeTicks = dto.RunTimeTicks ?? libraryItem.RunTimeTicks
+                    RunTimeTicks = dto.RunTimeTicks ?? libraryItem.RunTimeTicks,
+                    MediaStreams = BuildDefaultMediaStreams(container),
+                    Bitrate = container != "hls" ? 5_000_000 : null
                 });
             }
 
@@ -1204,6 +1213,53 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
         {
             _logger.LogError(ex, "[DynamicLibrary] Error querying AIOStreams for persisted item {Name}", dto.Name);
         }
+    }
+
+    /// <summary>
+    /// Sanitize stream display names by removing newlines and trimming whitespace.
+    /// Some providers return names with literal \n characters that can crash native clients.
+    /// </summary>
+    private static string SanitizeStreamName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return "Stream";
+        }
+
+        return name.Replace("\n", " ").Replace("\r", " ").Trim();
+    }
+
+    /// <summary>
+    /// Build default MediaStreams for a MediaSourceInfo based on container type.
+    /// HLS streams get no video/audio streams (player parses from m3u8 manifest).
+    /// Non-HLS streams get default h264/aac so clients can make playback decisions.
+    /// </summary>
+    private static List<MediaStream> BuildDefaultMediaStreams(string container)
+    {
+        if (container == "hls")
+        {
+            return new List<MediaStream>();
+        }
+
+        return new List<MediaStream>
+        {
+            new MediaStream
+            {
+                Type = MediaStreamType.Video,
+                Index = 0,
+                Codec = "h264",
+                IsDefault = true,
+            },
+            new MediaStream
+            {
+                Type = MediaStreamType.Audio,
+                Index = 1,
+                Codec = "aac",
+                IsDefault = true,
+                Language = "und",
+                Channels = 2
+            }
+        };
     }
 
     /// <summary>
