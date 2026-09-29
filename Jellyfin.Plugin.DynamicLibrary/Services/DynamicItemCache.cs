@@ -301,10 +301,10 @@ public class DynamicItemCache
     /// Store a mapping from AIOStreams MediaSource ID to item ID and stream URL.
     /// This allows us to resolve MediaSource IDs to both the parent item and stream URL.
     /// </summary>
-    public void StoreAIOStreamsMapping(string mediaSourceId, Guid itemId, string streamUrl, string? filename = null)
+    public void StoreAIOStreamsMapping(string mediaSourceId, Guid itemId, string streamUrl, string? filename = null, string? displayName = null)
     {
         var key = $"{AIOStreamsPrefix}{mediaSourceId}";
-        var mapping = new AIOStreamsMapping { ItemId = itemId, StreamUrl = streamUrl, Filename = filename };
+        var mapping = new AIOStreamsMapping { ItemId = itemId, StreamUrl = streamUrl, Filename = filename, DisplayName = displayName };
         _cache.Set(key, mapping, _cacheDuration);
         _logger.LogDebug("[DynamicItemCache] Stored AIOStreams mapping: {MediaSourceId} -> Item {ItemId}, URL {StreamUrl}",
             mediaSourceId, itemId, streamUrl);
@@ -361,4 +361,5 @@ public class AIOStreamsMapping
     public Guid ItemId { get; set; }
     public string StreamUrl { get; set; } = string.Empty;
     public string? Filename { get; set; }
+    public string? DisplayName { get; set; }
 }

@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json.Serialization;
 
 namespace Jellyfin.Plugin.DynamicLibrary.Models;
@@ -61,6 +63,47 @@ public class AIOStream
     public string DisplayName => !string.IsNullOrEmpty(Title)
         ? Title
         : Name ?? "Unknown Stream";
+}
+
+/// <summary>
+/// Stable Jellyfin IDs for AIOStreams sources. AIOStreams proxy URLs can contain
+/// per-request tokens, so IDs must be based on stream metadata rather than the URL.
+/// </summary>
+public static class AIOStreamsMediaSourceIds
+{
+    public static string Create(Guid itemId, AIOStream stream)
+    {
+        var hash = stream.InfoHash?.Trim().ToLowerInvariant();
+        var filename = stream.BehaviorHints?.Filename?.Trim();
+        var identity = !string.IsNullOrEmpty(hash)
+            ? $"torrent|{stream.Name?.Trim()}|{hash}|{stream.FileIndex}|{filename}"
+            : string.Join('|', new[]
+                {
+                    stream.Name?.Trim(),
+                    stream.Title?.Trim(),
+                    filename,
+                    stream.BehaviorHints?.BingeGroup?.Trim()
+                }.Where(value => !string.IsNullOrWhiteSpace(value)));
+
+        if (string.IsNullOrEmpty(identity))
+        {
+            identity = GetStableUrlPart(stream.Url);
+        }
+
+        using var md5 = MD5.Create();
+        var bytes = md5.ComputeHash(Encoding.UTF8.GetBytes($"aiostreams:{itemId:N}:{identity}"));
+        return new Guid(bytes).ToString("N");
+    }
+
+    private static string GetStableUrlPart(string? url)
+    {
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return $"{uri.Host}{uri.AbsolutePath}";
+        }
+
+        return url ?? string.Empty;
+    }
 }
 
 /// <summary>

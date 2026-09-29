@@ -86,7 +86,8 @@ TMDB metadata is fetched in a single API call using `append_to_response` (credit
 - **Direct**: Custom URL templates with placeholder support
 
 ### Persistent Library
-- Optionally save virtual items as real Jellyfin library items (.strm files)
+- Optionally save movies and individually played episodes as real Jellyfin library items (.strm files)
+- Browsing/searching does not persist content; persistence occurs after successful playback stream resolution
 - Full playback tracking, watched status, and resume support
 - Automatic detection of new episodes for ongoing series
 
@@ -249,7 +250,7 @@ Enable persistence to save virtual items as real Jellyfin library items with ful
 1. Enable `EnablePersistence` in plugin settings
 2. Set `PersistentLibraryPath` to a folder (e.g., `/media/dynamic-library`)
 3. Add this folder as a Jellyfin library (Movies and/or Shows)
-4. When you click on a virtual item, it creates a .strm file in this folder
+4. A movie or episode is persisted after its playback request resolves at least one usable stream
 5. Library scan adds it as a real item with full tracking
 
 ## How It Works
@@ -273,13 +274,15 @@ Cache items in memory
 Return results to Jellyfin UI
     |
     v
-User clicks item -> ItemLookupFilter returns cached DTO
+User opens item -> ItemLookupFilter returns cached metadata
     |
     v
-(Optional) PersistenceService creates .strm files
+User requests playback -> PlaybackInfoFilter resolves playable stream
+    |
+    +---- no usable stream ----> Do not persist
     |
     v
-User plays item -> PlaybackInfoFilter gets stream URL
+(If enabled) PersistenceService creates movie or played-episode .strm file
     |
     v
 (Optional) SubtitleFilter serves cached subtitles
