@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.DynamicLibrary.Api;
 using Jellyfin.Plugin.DynamicLibrary.Configuration;
@@ -127,11 +128,18 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
                 cachedItem = _itemCache.GetItem(aioMapping.ItemId);
                 if (cachedItem != null)
                 {
-                    // Return the item with just the selected MediaSource
+                    // GetItem returns the shared cached DTO. Selected-source responses must not
+                    // narrow MediaSources on that shared instance or later lookups lose versions.
+                    cachedItem = CloneItemDto(cachedItem);
+
+                    // Keep the selected source first for clients that default to the first
+                    // MediaSource, but retain the other versions in the item response.
                     var selectedSource = cachedItem.MediaSources?.FirstOrDefault(s => s.Id == mediaSourceIdStr);
                     if (selectedSource != null)
                     {
-                        cachedItem.MediaSources = new[] { selectedSource };
+                        cachedItem.MediaSources = new[] { selectedSource }
+                            .Concat(cachedItem.MediaSources!.Where(source => source.Id != selectedSource.Id))
+                            .ToArray();
                         _logger.LogInformation("[DynamicLibrary] ItemLookup: Returning {Name} with selected MediaSource {SourceName}",
                             cachedItem.Name, selectedSource.Name);
                     }
@@ -139,24 +147,24 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
                     {
                         // MediaSource not in item's list - create one from the mapping
                         var container = StreamContainerHelper.DetectContainer(aioMapping.StreamUrl, aioMapping.Filename);
-                        cachedItem.MediaSources = new[]
+                        var reconstructedSource = new MediaSourceInfo
                         {
-                            new MediaSourceInfo
-                            {
-                                Id = mediaSourceIdStr,
-                                Name = "Stream",
-                                Path = aioMapping.StreamUrl,
-                                Protocol = MediaProtocol.Http,
-                                Type = MediaSourceType.Default,
-                                Container = container,
-                                IsRemote = true,
-                                SupportsDirectPlay = true,
-                                SupportsDirectStream = false,
-                                SupportsTranscoding = false,
-                                MediaStreams = BuildDefaultMediaStreams(container),
-                                Bitrate = container != "hls" ? 5_000_000 : null
-                            }
+                            Id = mediaSourceIdStr,
+                            Name = aioMapping.DisplayName ?? "Stream",
+                            Path = aioMapping.StreamUrl,
+                            Protocol = MediaProtocol.Http,
+                            Type = MediaSourceType.Default,
+                            Container = container,
+                            IsRemote = true,
+                            SupportsDirectPlay = true,
+                            SupportsDirectStream = false,
+                            SupportsTranscoding = false,
+                            MediaStreams = BuildDefaultMediaStreams(container),
+                            Bitrate = container != "hls" ? 5_000_000 : null
                         };
+                        cachedItem.MediaSources = new[] { reconstructedSource }
+                            .Concat(cachedItem.MediaSources?.Where(source => source.Id != reconstructedSource.Id) ?? Array.Empty<MediaSourceInfo>())
+                            .ToArray();
                         _logger.LogInformation("[DynamicLibrary] ItemLookup: Returning {Name} with reconstructed MediaSource",
                             cachedItem.Name);
                     }
@@ -186,7 +194,7 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
                         new MediaSourceInfo
                         {
                             Id = mediaSourceIdStr,
-                            Name = "Stream",
+                            Name = aioMapping.DisplayName ?? "Stream",
                             Path = aioMapping.StreamUrl,
                             Protocol = MediaProtocol.Http,
                             Type = MediaSourceType.Default,
@@ -225,6 +233,11 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
                 // Try cache first (for dynamic items)
                 cachedItem = _itemCache.GetItem(episodeId.Value);
                 requestedMediaSourceId = mediaSourceIdStr;
+                if (cachedItem != null)
+                {
+                    // The selected-source filtering below is response-specific, not cache state.
+                    cachedItem = CloneItemDto(cachedItem);
+                }
 
                 // If not in cache, check if it's a persisted anime episode in the library
                 if (cachedItem == null)
@@ -349,7 +362,8 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
             }
         }
 
-        // If this was a MediaSource ID lookup, filter to only that MediaSource
+        // If this was a MediaSource ID lookup, keep the selected source first while retaining
+        // alternatives in the response. This preserves the selected default and the version list.
         if (!string.IsNullOrEmpty(requestedMediaSourceId) && cachedItem.MediaSources != null)
         {
             var selectedSource = cachedItem.MediaSources.FirstOrDefault(s => s.Id == requestedMediaSourceId);
@@ -357,7 +371,9 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
             {
                 _logger.LogDebug("[DynamicLibrary] Filtering to requested MediaSource: {Name} ({Id})",
                     selectedSource.Name, selectedSource.Id);
-                cachedItem.MediaSources = new[] { selectedSource };
+                cachedItem.MediaSources = new[] { selectedSource }
+                    .Concat(cachedItem.MediaSources.Where(source => source.Id != selectedSource.Id))
+                    .ToArray();
             }
         }
 
@@ -998,13 +1014,13 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
             var mediaSources = new List<MediaSourceInfo>();
             foreach (var stream in response.Streams.Where(s => !string.IsNullOrEmpty(s.Url)))
             {
-                var sourceId = GenerateAIOStreamsMediaSourceId(stream.Url!);
+                var sourceId = AIOStreamsMediaSourceIds.Create(item.Id, stream);
 
                 // Get filename hint for container detection
                 var filename = stream.BehaviorHints?.Filename;
 
                 // Store mapping so PlaybackInfoFilter can resolve it later
-                _itemCache.StoreAIOStreamsMapping(sourceId, item.Id, stream.Url!, filename);
+                _itemCache.StoreAIOStreamsMapping(sourceId, item.Id, stream.Url!, filename, SanitizeStreamName(stream.DisplayName));
 
                 // Detect container from URL/filename
                 var container = StreamContainerHelper.DetectContainer(stream.Url, filename);
@@ -1112,13 +1128,13 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
             var mediaSources = new List<MediaSourceInfo>();
             foreach (var stream in response.Streams.Where(s => !string.IsNullOrEmpty(s.Url)))
             {
-                var sourceId = GenerateAIOStreamsMediaSourceId(stream.Url!);
+                var sourceId = AIOStreamsMediaSourceIds.Create(dto.Id, stream);
 
                 // Get filename hint for container detection
                 var filename = stream.BehaviorHints?.Filename;
 
                 // Store mapping so PlaybackInfoFilter can resolve it later
-                _itemCache.StoreAIOStreamsMapping(sourceId, dto.Id, stream.Url!, filename);
+                _itemCache.StoreAIOStreamsMapping(sourceId, dto.Id, stream.Url!, filename, SanitizeStreamName(stream.DisplayName));
 
                 // Detect container from URL/filename
                 var container = StreamContainerHelper.DetectContainer(stream.Url, filename);
@@ -1204,6 +1220,12 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
         };
     }
 
+    private static BaseItemDto CloneItemDto(BaseItemDto item)
+    {
+        return JsonSerializer.Deserialize<BaseItemDto>(JsonSerializer.Serialize(item))
+            ?? throw new InvalidOperationException("Could not clone cached item DTO");
+    }
+
     /// <summary>
     /// Get the IMDB ID from a library item, checking item and series provider IDs.
     /// For episodes, always prefer the series IMDB ID (required for streaming APIs).
@@ -1272,13 +1294,4 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
         return null;
     }
 
-    /// <summary>
-    /// Generate a deterministic GUID for an AIOStreams MediaSource based on the stream URL.
-    /// </summary>
-    private static string GenerateAIOStreamsMediaSourceId(string streamUrl)
-    {
-        using var md5 = System.Security.Cryptography.MD5.Create();
-        var hash = md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes($"aiostreams:{streamUrl}"));
-        return new Guid(hash).ToString("N");
-    }
 }

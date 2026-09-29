@@ -1567,13 +1567,13 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             }
 
             // Generate deterministic ID for this stream
-            var sourceId = GenerateAIOStreamsMediaSourceId(stream.Url);
+            var sourceId = AIOStreamsMediaSourceIds.Create(item.Id, stream);
 
             // Get filename hint for container detection
             var filename = stream.BehaviorHints?.Filename;
 
             // Store mapping so we can resolve it later
-            _itemCache.StoreAIOStreamsMapping(sourceId, item.Id, stream.Url, filename);
+            _itemCache.StoreAIOStreamsMapping(sourceId, item.Id, stream.Url, filename, SanitizeStreamName(stream.DisplayName));
 
             // Detect container from URL/filename
             var container = StreamContainerHelper.DetectContainer(stream.Url, filename);
@@ -1782,10 +1782,10 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                 continue;
             }
 
-            var sourceId = GenerateAIOStreamsMediaSourceId(stream.Url);
+            var sourceId = AIOStreamsMediaSourceIds.Create(libraryItem.Id, stream);
             var filename = stream.BehaviorHints?.Filename;
 
-            _itemCache.StoreAIOStreamsMapping(sourceId, libraryItem.Id, stream.Url, filename);
+            _itemCache.StoreAIOStreamsMapping(sourceId, libraryItem.Id, stream.Url, filename, SanitizeStreamName(stream.DisplayName));
 
             var container = StreamContainerHelper.DetectContainer(stream.Url, filename);
 
@@ -2143,13 +2143,4 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         return name.Replace("\n", " ").Replace("\r", " ").Trim();
     }
 
-    /// <summary>
-    /// Generate a deterministic GUID for an AIOStreams MediaSource based on the stream URL.
-    /// </summary>
-    private static string GenerateAIOStreamsMediaSourceId(string streamUrl)
-    {
-        using var md5 = System.Security.Cryptography.MD5.Create();
-        var hash = md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes($"aiostreams:{streamUrl}"));
-        return new Guid(hash).ToString("N");
-    }
 }
