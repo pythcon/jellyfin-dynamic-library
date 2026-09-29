@@ -137,9 +137,7 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
                     var selectedSource = cachedItem.MediaSources?.FirstOrDefault(s => s.Id == mediaSourceIdStr);
                     if (selectedSource != null)
                     {
-                        cachedItem.MediaSources = new[] { selectedSource }
-                            .Concat(cachedItem.MediaSources!.Where(source => source.Id != selectedSource.Id))
-                            .ToArray();
+                        cachedItem.MediaSources = SourceFirst(selectedSource, cachedItem.MediaSources);
                         _logger.LogInformation("[DynamicLibrary] ItemLookup: Returning {Name} with selected MediaSource {SourceName}",
                             cachedItem.Name, selectedSource.Name);
                     }
@@ -162,9 +160,7 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
                             MediaStreams = BuildDefaultMediaStreams(container),
                             Bitrate = container != "hls" ? 5_000_000 : null
                         };
-                        cachedItem.MediaSources = new[] { reconstructedSource }
-                            .Concat(cachedItem.MediaSources?.Where(source => source.Id != reconstructedSource.Id) ?? Array.Empty<MediaSourceInfo>())
-                            .ToArray();
+                        cachedItem.MediaSources = SourceFirst(reconstructedSource, cachedItem.MediaSources);
                         _logger.LogInformation("[DynamicLibrary] ItemLookup: Returning {Name} with reconstructed MediaSource",
                             cachedItem.Name);
                     }
@@ -371,9 +367,7 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
             {
                 _logger.LogDebug("[DynamicLibrary] Filtering to requested MediaSource: {Name} ({Id})",
                     selectedSource.Name, selectedSource.Id);
-                cachedItem.MediaSources = new[] { selectedSource }
-                    .Concat(cachedItem.MediaSources.Where(source => source.Id != selectedSource.Id))
-                    .ToArray();
+                cachedItem.MediaSources = SourceFirst(selectedSource, cachedItem.MediaSources);
             }
         }
 
@@ -1225,6 +1219,9 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
         return JsonSerializer.Deserialize<BaseItemDto>(JsonSerializer.Serialize(item))
             ?? throw new InvalidOperationException("Could not clone cached item DTO");
     }
+
+    private static MediaSourceInfo[] SourceFirst(MediaSourceInfo selected, MediaSourceInfo[]? sources) =>
+        new[] { selected }.Concat(sources?.Where(source => source.Id != selected.Id) ?? Array.Empty<MediaSourceInfo>()).ToArray();
 
     /// <summary>
     /// Get the IMDB ID from a library item, checking item and series provider IDs.
