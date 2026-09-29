@@ -13,6 +13,7 @@ namespace Jellyfin.Plugin.DynamicLibrary.Services;
 /// </summary>
 public class PersistenceService
 {
+    private static readonly SemaphoreSlim PersistenceLock = new(1, 1);
     private readonly ILibraryManager _libraryManager;
     private readonly DynamicItemCache _itemCache;
     private readonly ILogger<PersistenceService> _logger;
@@ -85,10 +86,52 @@ public class PersistenceService
         var strmContent = $"dynamiclibrary://movie/{imdbId ?? tmdbId}";
 
         // Write .strm file
-        await File.WriteAllTextAsync(filePath, strmContent, cancellationToken);
+        try
+        {
+            await using var file = new FileStream(filePath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            await using var writer = new StreamWriter(file);
+            await writer.WriteAsync(strmContent.AsMemory(), cancellationToken);
+        }
+        catch (IOException) when (File.Exists(filePath))
+        {
+            _logger.LogDebug("[PersistenceService] Movie file already exists: {Path}", filePath);
+            return null;
+        }
 
         _logger.LogInformation("[PersistenceService] Created movie: {Path}", filePath);
         return folderPath;
+    }
+
+    /// <summary>Persist only the episode whose playback resolved successfully.</summary>
+    public async Task<string?> PersistEpisodeAsync(BaseItemDto episode, BaseItemDto series, CancellationToken cancellationToken = default)
+    {
+        if (episode.Type != BaseItemKind.Episode || series.Type != BaseItemKind.Series ||
+            episode.ParentIndexNumber is not > 0 || episode.IndexNumber is null)
+        {
+            return null;
+        }
+
+        await PersistenceLock.WaitAsync(cancellationToken);
+        try
+        {
+            var imdbId = series.ProviderIds?.GetValueOrDefault("Imdb");
+            var tvdbId = series.ProviderIds?.GetValueOrDefault("Tvdb");
+            var seriesId = imdbId ?? tvdbId;
+            if (string.IsNullOrEmpty(seriesId)) return null;
+
+            var title = SanitizeFileName(series.Name ?? "Unknown");
+            var seriesPath = GetSeriesFolderPath(series);
+            var seasonPath = Path.Combine(seriesPath, $"Season {episode.ParentIndexNumber.Value:D2}");
+            var episodeTitle = SanitizeFileName(episode.Name ?? $"Episode {episode.IndexNumber}");
+            var filePath = Path.Combine(seasonPath, $"{title} - S{episode.ParentIndexNumber.Value:D2}E{episode.IndexNumber.Value:D2} - {episodeTitle}.strm");
+            if (File.Exists(filePath)) return null;
+
+            Directory.CreateDirectory(seasonPath);
+            await PersistEpisodeAsync(episode, series, seriesPath, seasonPath, episode.ParentIndexNumber.Value,
+                seriesId, DynamicLibraryService.IsAnime(series), cancellationToken);
+            return seriesPath;
+        }
+        finally { PersistenceLock.Release(); }
     }
 
     /// <summary>

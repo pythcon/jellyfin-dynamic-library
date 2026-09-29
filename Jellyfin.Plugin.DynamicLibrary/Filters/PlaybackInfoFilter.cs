@@ -34,6 +34,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
     private readonly ITvdbClient _tvdbClient;
     private readonly SubtitleService _subtitleService;
     private readonly ILibraryManager _libraryManager;
+    private readonly PersistenceService _persistenceService;
     private readonly ILogger<PlaybackInfoFilter> _logger;
 
     private static readonly HashSet<string> PlaybackInfoActions = new(StringComparer.OrdinalIgnoreCase)
@@ -52,6 +53,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         ITvdbClient tvdbClient,
         SubtitleService subtitleService,
         ILibraryManager libraryManager,
+        PersistenceService persistenceService,
         ILogger<PlaybackInfoFilter> logger)
     {
         _itemCache = itemCache;
@@ -63,6 +65,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         _tvdbClient = tvdbClient;
         _subtitleService = subtitleService;
         _libraryManager = libraryManager;
+        _persistenceService = persistenceService;
         _logger = logger;
     }
 
@@ -110,6 +113,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                 _itemCache.StoreItemStreamUrl(itemId, aioStreamUrl);
 
                 var response = await BuildAIOStreamsDirectResponseAsync(itemId, aioStreamUrl, selectedMediaSourceId, context.HttpContext.RequestAborted);
+                await PersistAfterPlaybackResolutionAsync(_itemCache.GetItem(itemId), response, context.HttpContext.RequestAborted);
                 context.Result = new OkObjectResult(response);
                 return;
             }
@@ -333,6 +337,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             var aioResponse = await HandleAIOStreamsPlaybackAsync(cachedItem, selectedMediaSourceId, context.HttpContext.RequestAborted);
             if (aioResponse != null)
             {
+                await PersistAfterPlaybackResolutionAsync(cachedItem, aioResponse, context.HttpContext.RequestAborted);
                 context.Result = new OkObjectResult(aioResponse);
                 return;
             }
@@ -374,6 +379,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                         _logger.LogDebug("[DynamicLibrary] PlaybackInfo: Matched version '{AudioType}' for {Name}, URL={Url}",
                             selectedUrl.Value.AudioType, cachedItem.Name, selectedUrl.Value.Url);
                         var response = BuildPlaybackInfoResponse(cachedItem, new List<(string, string)> { selectedUrl.Value }, subtitles);
+                        await PersistAfterPlaybackResolutionAsync(cachedItem, response, context.HttpContext.RequestAborted);
                         context.Result = new OkObjectResult(response);
                         return;
                     }
@@ -385,6 +391,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
                 _logger.LogDebug("[DynamicLibrary] PlaybackInfo: Defaulting to first version '{AudioType}' for {Name}",
                     firstUrl.AudioType, cachedItem.Name);
                 var defaultResponse = BuildPlaybackInfoResponse(cachedItem, new List<(string, string)> { firstUrl }, subtitles);
+                await PersistAfterPlaybackResolutionAsync(cachedItem, defaultResponse, context.HttpContext.RequestAborted);
                 context.Result = new OkObjectResult(defaultResponse);
                 return;
             }
@@ -392,6 +399,7 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             _logger.LogDebug("[DynamicLibrary] Got {Count} stream URL(s) for {Name}", streamUrls.Count, cachedItem.Name);
 
             var allSourcesResponse = BuildPlaybackInfoResponse(cachedItem, streamUrls, subtitles);
+            await PersistAfterPlaybackResolutionAsync(cachedItem, allSourcesResponse, context.HttpContext.RequestAborted);
             context.Result = new OkObjectResult(allSourcesResponse);
             return;
         }
@@ -416,7 +424,39 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         }
 
         var response2 = BuildPlaybackInfoResponse(cachedItem, streamUrl, embedarrSubtitles);
+        await PersistAfterPlaybackResolutionAsync(cachedItem, response2, context.HttpContext.RequestAborted);
         context.Result = new OkObjectResult(response2);
+    }
+
+    private async Task PersistAfterPlaybackResolutionAsync(BaseItemDto? item, PlaybackInfoResponse response, CancellationToken cancellationToken)
+    {
+        if (Config.EnablePersistence != true || item == null || !SearchResultFactory.IsDynamicItem(item) ||
+            response.MediaSources?.Any(source => !string.IsNullOrWhiteSpace(source.Path)) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            string? path = null;
+            if (item.Type == BaseItemKind.Movie)
+            {
+                path = await _persistenceService.PersistMovieAsync(item, cancellationToken);
+            }
+            else if (item.Type == BaseItemKind.Episode && item.SeriesId.HasValue && _itemCache.GetItem(item.SeriesId.Value) is { Type: BaseItemKind.Series } series)
+            {
+                path = await _persistenceService.PersistEpisodeAsync(item, series, cancellationToken);
+            }
+
+            if (path != null)
+            {
+                _persistenceService.TriggerLibraryScan();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[DynamicLibrary] Failed to persist successfully resolved item {Name} ({Id})", item.Name, item.Id);
+        }
     }
 
     /// <summary>
